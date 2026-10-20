@@ -72,11 +72,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-state
-          path: ${{ runner.temp }}/release-state
+          path: .release-state
       - name: Apply prepared version
         shell: bash
-        working-directory: ${{ runner.temp }}/release-state
-        run: tar -xzf release-state.tgz -C "$GITHUB_WORKSPACE"
+        run: tar -xzf .release-state/release-state.tgz
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
