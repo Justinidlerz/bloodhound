@@ -1,55 +1,57 @@
-# 支持范围
+# Supported capabilities
 
-| 范围            | 实现                                                                      | 未完成项                                                                  |
-| --------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| JS 输入         | 文件、URL、内容，classic / module / unknown                               | 语法错误、模式或环境缺失                                                  |
-| 绑定与目标      | Oxc 作用域、局部遮蔽、全局词法与对象属性分离、未绑定引用                  | `with` 动态作用域                                                         |
-| 全局操作        | 声明、读、赋值、复合赋值、更新、delete、Object / Reflect、原型            | 未知属性键保留独立访问，不创建共享空目标                                  |
-| 别名            | 顺序赋值、失效、有限分支合并、直接 IIFE 与可绑定包装函数参数              | 复杂解构赋值、异常及 switch 的值传播、一般函数副作用                      |
-| 有限求值        | 字面量、拼接、模板、有限条件、数组与对象常量键、受限返回表达式            | getter、Proxy、一般调用、扩张超预算                                       |
-| ESM             | import / export、动态 import 候选、跨模块原始值摘要、有界迭代             | 非有限动态依赖、未知裸模块映射                                            |
-| webpack         | 运行时对象属性、纯 chunk 映射函数、脚本 src 表达式、有限 ID 表            | 自动 publicPath、复杂运行时函数及未知地址                                 |
-| Vite            | 动态 import；具有链接创建与回调调用结构的 preload 包装函数及有限依赖数组  | 一般缓存型 mapDeps 包装及非有限数组                                       |
-| DOM             | document / body / head 及别名的操作候选、可还原节点资源地址               | 未知节点身份、运行时插入、退出残留                                        |
-| Worker / iframe | 入口可解析时建立独立 scope，保留引用边                                    | 文档基准未知、动态子环境地址                                              |
-| HTML            | HTML5 分词、raw-text、base、Import Map 快照、脚本、样式、iframe、内联偏移 | foreign-content 树上下文、noscript 环境、token 恢复、事件处理器特殊作用域 |
-| CSS             | CSS Syntax 解析、@import、url、全局选择器、reset、自定义属性、动画        | 解析恢复、未知资源值；候选不代表实际匹配或污染                            |
-| source map      | Rust sourcemap，外链和 data URL                                           | 缺失或不可用只影响可选源码位置                                            |
+Use this reference to identify supported syntax, analysis limits, and report semantics.
 
-HTML 使用有位置的 HTML5 分词，不模拟完整浏览器 DOM 树构造。模板内容保持惰性，特殊树上下文明确降低覆盖。`srcdoc` 等实体解码内容的宿主定位只保留属性所属标签范围，子资源内部位置独立记录。
+| Area                 | Implementation                                                                                                            | Coverage gaps                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| JavaScript input     | Files, URLs, source text, and classic / module / unknown modes                                                            | Syntax errors and missing script mode or environment                                              |
+| Bindings and targets | Oxc scopes, local shadowing, separate global lexical bindings and object properties, and unbound references               | Dynamic scopes introduced by `with`                                                               |
+| Global operations    | Declarations, reads, assignments, compound assignments, updates, delete, Object / Reflect APIs, and prototypes            | Unknown property keys remain separate accesses without a shared placeholder target                |
+| Aliases              | Sequential assignments, invalidation, bounded branch merging, direct IIFEs, and wrapper parameters with known bindings    | Complex destructuring, exception and switch value propagation, and general function side effects  |
+| Bounded evaluation   | Literals, concatenation, templates, bounded conditions, constant array and object keys, and restricted return expressions | Getters, proxies, general calls, and expansion beyond budgets                                     |
+| ESM                  | Imports, exports, dynamic import candidates, cross-module primitive summaries, and bounded iteration                      | Unbounded dynamic dependencies and unknown bare-specifier mappings                                |
+| webpack              | Runtime object properties, pure chunk mapping functions, script `src` expressions, and bounded ID tables                  | Automatic publicPath, complex runtime functions, and unknown addresses                            |
+| Vite                 | Dynamic imports, preload wrappers with link creation and callback invocation, and bounded dependency arrays               | General caching mapDeps wrappers and unbounded arrays                                             |
+| DOM                  | Candidate operations on document / body / head and aliases, and recoverable node resource addresses                       | Unknown node identity, runtime insertion, and teardown residue                                    |
+| Workers / iframes    | Separate scopes for resolvable entry points, with reference edges preserved                                               | Unknown document bases and dynamic child-environment addresses                                    |
+| HTML                 | HTML5 tokenization, raw text, base URLs, import map snapshots, scripts, styles, iframes, and inline offsets               | Foreign-content tree contexts, noscript environments, token recovery, and event-handler scopes    |
+| CSS                  | CSS Syntax parsing, @import, url, global selectors, resets, custom properties, and animations                             | Parser recovery and unknown resource values. Candidates do not prove actual matching or pollution |
+| Source maps          | Rust sourcemap support for external maps and data URLs                                                                    | Missing or unavailable maps affect only optional original-source locations                        |
 
-webpack 适配按语法结构和 Oxc 绑定关联，不匹配固定的压缩变量名。chunk 映射给出有限候选，并不证明每个 chunk 都会加载。Vite 的普通动态 import 始终由 ESM 分析处理，preload 只是补充资源边。
+HTML processing uses tokenization with source locations, without constructing a complete browser DOM tree. Template contents remain inert, and special tree contexts explicitly reduce coverage. For entity-decoded content such as `srcdoc`, the host location identifies the tag containing the attribute. Child-resource locations remain independent.
 
-# 状态
+The webpack adapter matches syntax structures and Oxc bindings rather than fixed minified variable names. Chunk mappings produce bounded candidates without proving that every chunk loads. ESM analysis handles ordinary Vite dynamic imports, while preload analysis adds resource edges.
 
-| 状态      | 含义                                             |
-| --------- | ------------------------------------------------ |
-| completed | 声明范围内没有已记录的必检缺口                   |
-| partial   | 有结果，同时存在未知依赖、上下文、语义或预算缺口 |
-| failed    | 没有建立有效分析结果                             |
-| cancelled | runStatus，独立于以上扫描状态                    |
+# Status
 
-`single` 明确排除依赖闭包，引用边标记 `not-followed`。`completed` 不表示程序没有动态行为，也不表示候选问题实际发生。
+| Status    | Meaning                                                                  |
+| --------- | ------------------------------------------------------------------------ |
+| completed | No required coverage gaps were recorded within the declared scope        |
+| partial   | Results exist, with gaps in dependencies, context, semantics, or budgets |
+| failed    | No valid analysis result was established                                 |
+| cancelled | A `runStatus` value, independent of the scan statuses                    |
 
-# 索引与位置
+`single` excludes the dependency closure and marks reference edges as `not-followed`. `completed` does not mean that the program has no dynamic behavior or that candidate issues occurred at runtime.
 
-- targetId 使用 scope、namespace、分段路径和键类型生成。局部 Symbol 额外绑定分析实例，不与其他资源合并。
-- 同内容不同 URL 或上下文保留独立实例，循环只阻止重复分析，保留引用边。
-- 未绑定裸引用保留候选关系，不能直接认定为隐式全局属性。
-- 产物位置采用 UTF-16 偏移、从 1 开始的行、从 0 开始的列，Rust 内部 UTF-8 偏移在输出时转换。
-- 多写入、原型变更、DOM/CSS 操作均为 static-candidate。
-- 版本差异匹配资源、scope、模式、环境、目标和操作特征。匹配不唯一时返回新增和移除。相同类型的任意值变化不保证识别。
+# Indexes and locations
 
-# 运行预算
+- Target IDs use scope, namespace, path segments, and key type. Local Symbols also include the analysis instance and do not merge across resources.
+- Identical contents with different URLs or contexts retain separate instances. Cycles prevent repeated analysis while preserving reference edges.
+- Unbound bare references retain candidate relationships. They are not automatically classified as implicit global properties.
+- Artifact locations use UTF-16 offsets, one-based lines, and zero-based columns. Rust converts its internal UTF-8 offsets when emitting results.
+- Multiple writes, prototype changes, and DOM/CSS operations remain `static-candidate` findings.
+- Version diffs match resources, scopes, modes, environments, targets, and operation features. Ambiguous matches become additions and removals. Changes between arbitrary values of the same type are not guaranteed to be detected.
 
-资源数、总字节、单资源字节、下载缓冲字节、并发、深度、时间、AST 访问、有限求值、候选数、摘要轮次和记录数都有上限。AST 在单资源分析后释放，缓存受字节预算限制。
+# Runtime budgets
 
-这些上限控制输入、任务和结果规模，不是操作系统 RSS 硬限额。大型或不可信输入可由宿主进程附加内存限制。网络阻塞受请求超时限制，解析阶段不承诺即时抢占。
+Limits apply to resource counts, total bytes, bytes per resource, download buffers, concurrency, depth, time, AST visits, bounded evaluation, candidate counts, summary rounds, and record counts. ASTs are released after each resource analysis, and caches have byte limits.
 
-JSONL 支持消费端背压到文件系统。返回标准报告与内存索引会占用与记录规模相关的内存。恢复从保存的入口重建图并重新读取资源，当前不跳过远程内容校验。
+These limits bound input, work, and result sizes. They are not operating-system RSS limits. A host process can impose additional memory limits for large or untrusted inputs. Request timeouts bound network waits, while parsing does not guarantee immediate preemption.
 
-断点保留访问范围、资源映射和 source map 开关。认证请求头与代理参数不保存，恢复时重新传入。
+JSONL supports consumer backpressure through the filesystem. Standard reports and in-memory indexes use memory proportional to their record counts. Recovery rebuilds the graph from saved entries and reads resources again, including remote content validation.
 
-# 交付边界
+Checkpoints preserve access restrictions, resource mappings, and source map settings. Supply authentication headers and proxy settings again when resuming.
 
-不包含平台数据库、发布 Guard、浏览器探针或线上发布。没有新增单元测试套件。真实产物扫描与构建证据不能替代完整的业务标注集精确率和召回率验收。
+# Delivery scope
+
+The SDK excludes platform databases, release gates, browser probes, and production deployment. No unit test suite was added. Scans of real artifacts and build evidence do not replace precision and recall evaluation against a fully labeled application dataset.

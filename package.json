@@ -19,7 +19,8 @@
     "./index-schema": "./schemas/index.schema.json"
   },
   "files": [
-    "dist",
+    "dist/*.js",
+    "dist/*.d.ts",
     "schemas",
     "README.md",
     "docs/support.md",
@@ -33,11 +34,13 @@
     "prepack": "pnpm build",
     "example": "node examples/scan.mjs",
     "example:html": "node examples/scan-html.mjs",
-    "format": "prettier --write src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json",
-    "format:check": "prettier --check src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json",
+    "format": "prettier --write src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json npm pnpm-workspace.yaml",
+    "format:check": "prettier --check src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json npm pnpm-workspace.yaml",
     "changeset": "changeset",
     "changeset:status": "changeset status",
-    "version:packages": "changeset version && node scripts/sync-native-version.mjs"
+    "version:packages": "changeset version && node scripts/sync-native-version.mjs && node scripts/sync-platform-packages.mjs",
+    "platforms:sync": "node scripts/sync-platform-packages.mjs",
+    "pack:release": "node scripts/pack-ci.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
@@ -47,7 +50,14 @@
     "typescript": "^5.9.3"
   },
   "napi": {
-    "binaryName": "bloodhound"
+    "binaryName": "bloodhound",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "publishConfig": {
     "access": "public",
@@ -57,5 +67,12 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Justinidlerz/bloodhound.git"
+  },
+  "optionalDependencies": {
+    "@bloodhound-rs/core-linux-x64-gnu": "workspace:*",
+    "@bloodhound-rs/core-linux-arm64-gnu": "workspace:*",
+    "@bloodhound-rs/core-darwin-arm64": "workspace:*",
+    "@bloodhound-rs/core-darwin-x64": "workspace:*",
+    "@bloodhound-rs/core-win32-x64-msvc": "workspace:*"
   }
 }

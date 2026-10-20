@@ -1,0 +1,27 @@
+{
+  "name": "@bloodhound-rs/core-win32-x64-msvc",
+  "version": "0.1.1",
+  "cpu": [
+    "x64"
+  ],
+  "main": "bloodhound.win32-x64-msvc.node",
+  "files": [
+    "bloodhound.win32-x64-msvc.node"
+  ],
+  "description": "Rust static resource scanner with a thin Node.js SDK",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Justinidlerz/bloodhound.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ]
+}

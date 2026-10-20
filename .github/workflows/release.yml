@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: ignore
 
   package:
-    name: Assemble npm package
+    name: Assemble npm packages
     needs: [prepare, native]
     runs-on: ubuntu-24.04
     steps:
@@ -127,6 +127,7 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
+      - uses: pnpm/action-setup@v6
       - uses: actions/download-artifact@v4
         with:
           name: release-state
@@ -141,12 +142,16 @@ jobs:
         with:
           name: sdk-bindings
           path: dist
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Pack prebuilt binaries without rebuilding
         run: node scripts/pack-ci.mjs
       - uses: actions/upload-artifact@v4
         with:
-          name: bloodhound-core-package
-          path: artifacts/*.tgz
+          name: bloodhound-packages
+          path: |
+            artifacts/*.tgz
+            artifacts/release-manifest.json
+            artifacts/publish-ci.mjs
           if-no-files-found: error
 
   publish:
@@ -187,17 +192,13 @@ jobs:
           NODE
       - uses: actions/download-artifact@v4
         with:
-          name: bloodhound-core-package
+          name: bloodhound-packages
           path: artifacts
-      - name: Publish assembled package
+      - name: Publish platform packages, then core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
-        run: |
-          shopt -s nullglob
-          packages=(./artifacts/*.tgz)
-          test "${#packages[@]}" -eq 1
-          npm publish "${packages[0]}" --ignore-scripts --access public --provenance --tag "$NPM_TAG"
+        run: node artifacts/publish-ci.mjs
       - name: Record published version in job summary
         env:
           PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -231,7 +232,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A .changeset package.json pnpm-lock.yaml native/Cargo.toml Cargo.lock
+          git add -A .changeset package.json pnpm-lock.yaml native/Cargo.toml Cargo.lock npm
           if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
           git commit -m "chore: release ${PACKAGE_VERSION} [skip ci]"
           git tag -a "v${PACKAGE_VERSION}" -m "Release ${PACKAGE_VERSION}"

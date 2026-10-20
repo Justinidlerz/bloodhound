@@ -33,6 +33,7 @@ if (process.env.GITHUB_REPOSITORY) {
 }
 writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 execFileSync(process.execPath, ['scripts/sync-native-version.mjs'], { stdio: 'inherit' });
+execFileSync(process.execPath, ['scripts/sync-platform-packages.mjs'], { stdio: 'inherit' });
 
 const outputs = {
   has_release: String(hasRelease),
@@ -45,7 +46,20 @@ if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
 }
 if (process.env.RUNNER_TEMP) {
-  const files = ['package.json', 'pnpm-lock.yaml', 'native/Cargo.toml', 'Cargo.lock', '.changeset'];
+  const files = [
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    'native/Cargo.toml',
+    'Cargo.lock',
+    '.changeset',
+  ];
+  for (const { platform } of readJson('.github/native-targets.json')) {
+    for (const name of ['package.json', 'README.md', 'CHANGELOG.md']) {
+      const file = join('npm', platform, name);
+      if (existsSync(file)) files.push(file);
+    }
+  }
   if (existsSync('CHANGELOG.md')) files.push('CHANGELOG.md');
   execFileSync('tar', ['-czf', join(process.env.RUNNER_TEMP, 'release-state.tgz'), ...files]);
 }

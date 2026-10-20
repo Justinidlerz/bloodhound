@@ -2,7 +2,16 @@
   "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@bloodhound-rs/core",
+      "@bloodhound-rs/core-linux-x64-gnu",
+      "@bloodhound-rs/core-linux-arm64-gnu",
+      "@bloodhound-rs/core-darwin-arm64",
+      "@bloodhound-rs/core-darwin-x64",
+      "@bloodhound-rs/core-win32-x64-msvc"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

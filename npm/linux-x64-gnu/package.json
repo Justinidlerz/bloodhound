@@ -1,0 +1,30 @@
+{
+  "name": "@bloodhound-rs/core-linux-x64-gnu",
+  "version": "0.1.1",
+  "cpu": [
+    "x64"
+  ],
+  "main": "bloodhound.linux-x64-gnu.node",
+  "files": [
+    "bloodhound.linux-x64-gnu.node"
+  ],
+  "description": "Rust static resource scanner with a thin Node.js SDK",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Justinidlerz/bloodhound.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

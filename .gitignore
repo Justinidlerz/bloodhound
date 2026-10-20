@@ -5,3 +5,6 @@ native/*.node
 *.tgz
 outputs/
 log/
+npm/**/*.node
+npm/*/LICENSE
+artifacts/

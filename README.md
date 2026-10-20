@@ -12,6 +12,24 @@ A Rust SDK for static analysis of browser resources. Rust exports the public met
 
 Results describe static accesses and potential issues. They do not prove that code executed or modified runtime state. The scanner never executes the code it analyzes.
 
+## Install
+
+```sh
+pnpm add @bloodhound-rs/core
+```
+
+The core package contains the generated loader, type declarations, and schemas. The package manager selects a native binary through optional dependencies using the operating system, CPU architecture, and Linux libc. Keep optional dependencies enabled.
+
+| Platform            | Binary package                        |
+| ------------------- | ------------------------------------- |
+| macOS Apple Silicon | `@bloodhound-rs/core-darwin-arm64`    |
+| macOS Intel         | `@bloodhound-rs/core-darwin-x64`      |
+| Linux glibc ARM64   | `@bloodhound-rs/core-linux-arm64-gnu` |
+| Linux glibc x64     | `@bloodhound-rs/core-linux-x64-gnu`   |
+| Windows x64         | `@bloodhound-rs/core-win32-x64-msvc`  |
+
+The loader uses the architecture of the running Node.js process. Linux musl is not supported. Install dependencies on the target system instead of copying `node_modules` between platforms.
+
 ## Build
 
 Requires Node.js 22+, pnpm 10.20.0, Rust 1.97+, and the platform's C/C++ build tools.
@@ -159,6 +177,8 @@ const report = await pending;
 pnpm pack
 ```
 
-Local packaging builds the native binary and type declarations and includes `dist/`, schemas, and the available platform `.node` files. `.github/workflows/release.yml` uses Changesets to manage versions, build multiple platforms, publish PR beta versions, and publish stable releases from the main branch. Run `pnpm changeset` for changes that require a release. See [Releasing](docs/releasing.md) for account and npm Trusted Publishing configuration. Linux builds target glibc; musl binaries are not provided. Local validation does not establish that all platform builds pass.
+`pnpm pack` builds the local SDK and packs core without native binaries. For a complete release, CI builds every target in `.github/native-targets.json`, collects the binaries in `dist/`, then runs `pnpm pack:release` to produce six archives in `artifacts/`.
+
+Changesets keeps core and the five binary packages at the same version. The workflow publishes and confirms the binary packages before publishing core with exact optional dependency versions. Run `pnpm changeset` for changes that require a release. See [Releasing](docs/releasing.md) for beta releases, stable releases, and npm authentication.
 
 See [Support](docs/support.md) for capabilities and limitations, [Technical design](docs/technical-design.md) for the design, and [Verification](docs/verification.md) for local validation evidence.
