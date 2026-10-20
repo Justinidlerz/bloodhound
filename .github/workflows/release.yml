@@ -189,8 +189,9 @@ jobs:
         with:
           name: bloodhound-core-package
           path: artifacts
-      - name: Publish assembled package with OIDC
+      - name: Publish assembled package
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: |
           shopt -s nullglob

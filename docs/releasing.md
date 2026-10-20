@@ -35,10 +35,11 @@ pnpm changeset
 | 位置                                 | 配置                                                                                         |
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |
 | GitHub 仓库 Actions variables        | 设置 `NPM_RELEASE_USER` 为获准发布的 GitHub 用户名。未设置时仅构建，不发布                   |
+| GitHub 仓库 Actions secrets          | 首次发布或尚未配置 Trusted Publisher 时，设置有目标 scope 发布权限的 `NPM_TOKEN`             |
 | npm 包 Settings → Trusted publishing | GitHub owner、仓库名填写实际仓库，workflow filename 填 `release.yml`，允许直接 `npm publish` |
 | GitHub Actions 权限及分支规则        | 允许发布后的元数据任务写入 `main` 和版本标签；不需要 PR 评论权限                             |
 
-发布采用 Node.js 24 和 npm OIDC，检查 npm 版本至少为 11.5.1，不依赖 `NPM_TOKEN`。包的 `repository.url` 在准备阶段根据当前 GitHub 仓库生成。配置步骤见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。npm 包及可信发布关系需要由维护者在 npm 配置，本地工作流文件不会创建这些远程设置。
+发布采用 Node.js 24，检查 npm 版本至少为 11.5.1。npm 优先使用可用的 OIDC 可信发布授权，并支持通过 `NPM_TOKEN` 完成首次发布。Token 仅注入发布步骤，不传入构建任务。首次发布完成后，在 npm 包设置中绑定 Trusted Publisher，确认 OIDC 发布通过后即可移除 `NPM_TOKEN`。包的 `repository.url` 在准备阶段根据当前 GitHub 仓库生成。配置步骤见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。
 
 正式发布成功而元数据回写失败时，先处理分支或标签权限、分支前进冲突，再恢复 `record-release` 任务。工作流不强制推送、不删除 npm 版本。PR beta 版本号包含运行 ID 和重试次数，重复运行不会复用同一 beta 版本。
 
