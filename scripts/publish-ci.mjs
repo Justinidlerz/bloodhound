@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setTimeout } from 'node:timers/promises';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const { registry, packages } = JSON.parse(
@@ -56,18 +55,44 @@ function publishedIntegrity(entry) {
     throw error;
   }
 }
+const results = [];
+function record(entry, status) {
+  results.push({ ...entry, tag, status });
+  writeFileSync(
+    resolve(directory, 'stage-results.json'),
+    JSON.stringify({ registry, packages: results }, null, 2) + '\n',
+  );
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `- ${entry.name}@${entry.version}: ${status} (tag: ${tag}).\n`,
+    );
+  }
+}
+if (!dryRun && process.env.GITHUB_STEP_SUMMARY) {
+  appendFileSync(
+    process.env.GITHUB_STEP_SUMMARY,
+    '### npm staging results\n\nStaged packages require maintainer approval with 2FA. Approve the platform packages first, confirm they are available, then approve core. Stage IDs are in the npm command logs.\n\n',
+  );
+}
 for (const entry of packages) {
   if (dryRun) {
-    console.log(`Publish ${entry.name}@${entry.version} from ${entry.filename}`);
+    console.log(`Stage ${entry.name}@${entry.version} from ${entry.filename}`);
     continue;
   }
-  let integrity = publishedIntegrity(entry);
-  if (integrity && integrity !== entry.integrity)
-    throw new Error(`Published content differs: ${entry.name}@${entry.version}`);
-  if (!integrity) {
+  try {
+    const integrity = publishedIntegrity(entry);
+    if (integrity && integrity !== entry.integrity)
+      throw new Error(`Published content differs: ${entry.name}@${entry.version}`);
+    if (integrity) {
+      record(entry, 'already-published');
+      console.log(`Verified published ${entry.name}@${entry.version}`);
+      continue;
+    }
     execFileSync(
       'npm',
       [
+        'stage',
         'publish',
         resolve(directory, entry.filename),
         '--ignore-scripts',
@@ -81,15 +106,10 @@ for (const entry of packages) {
       ],
       { stdio: 'inherit' },
     );
-    const deadline = Date.now() + 600000;
-    while (!integrity && Date.now() < deadline) {
-      await setTimeout(15000);
-      integrity = publishedIntegrity(entry);
-    }
-    if (integrity !== entry.integrity)
-      throw new Error(
-        `Published content not confirmed: ${entry.name}@${entry.version}. Re-run this job after registry processing completes.`,
-      );
+    record(entry, 'staged');
+    console.log(`Staged ${entry.name}@${entry.version}; awaiting maintainer approval.`);
+  } catch (error) {
+    record(entry, 'failed');
+    throw error;
   }
-  console.log(`Verified ${entry.name}@${entry.version}`);
 }

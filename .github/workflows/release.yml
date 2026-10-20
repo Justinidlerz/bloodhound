@@ -6,6 +6,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      stage_run_id:
+        description: 'Stage original archives from a completed main-branch Release run (empty = build check)'
+        required: false
+        type: string
+      stage_tag:
+        description: 'npm tag applied when the staged packages are approved'
+        type: choice
+        options: [latest, beta]
+        default: latest
 
 permissions:
   contents: read
@@ -19,6 +29,7 @@ env:
 
 jobs:
   prepare:
+    if: github.event_name != 'workflow_dispatch' || inputs.stage_run_id == ''
     name: Check source and prepare Changesets version
     runs-on: ubuntu-24.04
     outputs:
@@ -155,7 +166,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish ${{ needs.prepare.outputs.npm_tag }}
+    name: Stage ${{ needs.prepare.outputs.npm_tag }} for approval
     needs: [prepare, package]
     if: >-
       needs.prepare.outputs.has_release == 'true' &&
@@ -180,33 +191,33 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Check npm trusted publishing support
+      - name: Check npm staged publishing support
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
           const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
-          const [major, minor, patch] = version.split('.').map(Number);
-          if (!(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))))) {
-            throw new Error(`npm >= 11.5.1 required, found ${version}`);
+          const [major, minor] = version.split('.').map(Number);
+          if (!(major > 11 || (major === 11 && minor >= 15))) {
+            throw new Error(`npm >= 11.15.0 required, found ${version}`);
           }
           NODE
       - uses: actions/download-artifact@v4
         with:
           name: bloodhound-packages
           path: artifacts
-      - name: Publish platform packages, then core
+      - name: Stage platform packages, then core
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: node artifacts/publish-ci.mjs
-      - name: Record published version in job summary
-        env:
-          PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
-          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
-        run: printf 'Published version `%s` with npm tag `%s`.\n' "$PACKAGE_VERSION" "$NPM_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-stage-results-${{ github.run_attempt }}
+          path: artifacts/stage-results.json
+          if-no-files-found: ignore
 
-  record-release:
-    name: Commit release metadata and tag
+  record-stage:
+    name: Record staged version metadata
     needs: [prepare, publish]
     if: github.event_name == 'push' && needs.prepare.outputs.npm_tag == 'latest'
     runs-on: ubuntu-24.04
@@ -234,6 +245,67 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A .changeset package.json pnpm-lock.yaml native/Cargo.toml Cargo.lock npm
           if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
-          git commit -m "chore: release ${PACKAGE_VERSION} [skip ci]"
-          git tag -a "v${PACKAGE_VERSION}" -m "Release ${PACKAGE_VERSION}"
-          git push --atomic origin "HEAD:${RELEASE_BRANCH}" "refs/tags/v${PACKAGE_VERSION}"
+          git commit -m "chore: stage ${PACKAGE_VERSION} [skip ci]"
+          git push origin "HEAD:${RELEASE_BRANCH}"
+
+  stage-existing:
+    name: Stage original release archives for approval
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.stage_run_id != '' &&
+      github.ref == 'refs/heads/main' &&
+      vars.NPM_RELEASE_USER != '' &&
+      github.triggering_actor == vars.NPM_RELEASE_USER
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Validate original workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.stage_run_id }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
+          const [major, minor] = version.split('.').map(Number);
+          if (!(major > 11 || (major === 11 && minor >= 15))) {
+            throw new Error(`npm >= 11.15.0 required, found ${version}`);
+          }
+          const id = process.env.SOURCE_RUN_ID;
+          if (!/^[1-9]\d*$/.test(id)) throw new Error('Invalid source run ID');
+          const run = JSON.parse(execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${id}`], { encoding: 'utf8' }));
+          if (run.event !== 'push' || run.head_branch !== 'main' || run.path !== '.github/workflows/release.yml' || run.status !== 'completed') {
+            throw new Error('Recovery requires a completed main-branch Release push run');
+          }
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Original artifacts: run ${id}, source commit ${run.head_sha}. No rebuild.\n\n`);
+          NODE
+      - uses: actions/download-artifact@v4
+        with:
+          name: bloodhound-packages
+          path: artifacts
+          run-id: ${{ inputs.stage_run_id }}
+          github-token: ${{ github.token }}
+      - name: Apply current staging script to original archives
+        run: cp scripts/publish-ci.mjs artifacts/publish-ci.mjs
+      - name: Stage missing versions and verify existing versions
+        env:
+          NPM_TAG: ${{ inputs.stage_tag }}
+        run: node artifacts/publish-ci.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-stage-results-${{ github.run_attempt }}
+          path: artifacts/stage-results.json
+          if-no-files-found: ignore
