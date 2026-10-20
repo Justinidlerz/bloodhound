@@ -1,0 +1,542 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bloodhound.dev/schemas/report-v1.json",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "indexSchemaVersion": {
+      "const": 1
+    },
+    "scannerVersion": {
+      "type": "string"
+    },
+    "scanId": {
+      "type": "string"
+    },
+    "scopeKey": {
+      "type": "string"
+    },
+    "scanStatus": {
+      "enum": ["completed", "partial", "failed"]
+    },
+    "runStatus": {
+      "enum": ["finished", "cancelled"]
+    },
+    "startedAt": {
+      "type": "string"
+    },
+    "finishedAt": {
+      "type": "string"
+    },
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/context"
+        },
+        "budgets": {
+          "type": "object"
+        },
+        "dependencyMode": {
+          "enum": ["single", "recursive"]
+        }
+      },
+      "required": ["context", "budgets", "dependencyMode"],
+      "additionalProperties": false
+    },
+    "entryAnalysisIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resource"
+      }
+    },
+    "analysisInstances": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/analysis"
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reference"
+      }
+    },
+    "globalTargets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/target"
+      }
+    },
+    "globalAccesses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/access"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unresolved"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "analyzed": {
+          "type": "number"
+        },
+        "failed": {
+          "type": "number"
+        },
+        "unresolved": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "dependencyMode": {
+          "enum": ["single", "recursive"]
+        },
+        "sourceMapped": {
+          "type": "number"
+        },
+        "elapsedMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "analyzed",
+        "failed",
+        "unresolved",
+        "bytes",
+        "dependencyMode",
+        "sourceMapped",
+        "elapsedMs"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "indexSchemaVersion",
+    "scannerVersion",
+    "scanId",
+    "scopeKey",
+    "scanStatus",
+    "runStatus",
+    "startedAt",
+    "finishedAt",
+    "configuration",
+    "entryAnalysisIds",
+    "resources",
+    "analysisInstances",
+    "references",
+    "globalTargets",
+    "globalAccesses",
+    "findings",
+    "unresolved",
+    "coverage"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "location": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "line": {
+          "type": "number"
+        },
+        "column": {
+          "type": "number"
+        },
+        "endLine": {
+          "type": "number"
+        },
+        "endColumn": {
+          "type": "number"
+        },
+        "offsetEncoding": {
+          "const": "utf16"
+        },
+        "original": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "line": {
+              "type": "number"
+            },
+            "column": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["source", "line", "column"],
+          "additionalProperties": false
+        },
+        "container": {
+          "type": "object",
+          "properties": {
+            "resourceUrl": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "line": {
+              "type": "number"
+            },
+            "column": {
+              "type": "number"
+            },
+            "approximate": {
+              "type": "boolean"
+            }
+          },
+          "required": ["resourceUrl", "offset", "line", "column"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["start", "end", "line", "column", "endLine", "endColumn", "offsetEncoding"],
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "scriptMode": {
+          "enum": ["classic", "module", "unknown"]
+        },
+        "executionEnvironment": {
+          "enum": ["window", "worker", "unknown"]
+        },
+        "scopeKey": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "importMap": {
+          "type": "object"
+        },
+        "importMapBaseUrl": {
+          "type": "string"
+        },
+        "publicPath": {
+          "type": "string"
+        }
+      },
+      "required": ["scriptMode", "executionEnvironment", "scopeKey", "versions"],
+      "additionalProperties": false
+    },
+    "resource": {
+      "type": "object",
+      "properties": {
+        "resourceId": {
+          "type": "string"
+        },
+        "requestedUrl": {
+          "type": "string"
+        },
+        "finalUrl": {
+          "type": "string"
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": ["js", "html", "css", "asset"]
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "scmId": {
+          "type": "string"
+        },
+        "inline": {
+          "type": "object",
+          "properties": {
+            "parentUrl": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "approximate": {
+              "type": "boolean"
+            }
+          },
+          "required": ["parentUrl", "offset"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["resourceId", "requestedUrl", "finalUrl", "contentHash", "kind", "bytes"],
+      "additionalProperties": false
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "analysisId": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "contextHash": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/context"
+        },
+        "scanStatus": {
+          "enum": ["completed", "partial", "failed"]
+        },
+        "exports": {
+          "type": "object"
+        },
+        "sourceMapStatus": {
+          "enum": ["absent", "mapped", "unavailable"]
+        }
+      },
+      "required": [
+        "analysisId",
+        "resourceId",
+        "contextHash",
+        "context",
+        "scanStatus",
+        "exports",
+        "sourceMapStatus"
+      ],
+      "additionalProperties": false
+    },
+    "reference": {
+      "type": "object",
+      "properties": {
+        "referenceId": {
+          "type": "string"
+        },
+        "fromAnalysisId": {
+          "type": "string"
+        },
+        "toAnalysisIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string"
+        },
+        "specifier": {
+          "type": "string"
+        },
+        "resolvedUrl": {
+          "type": "string"
+        },
+        "resolution": {
+          "enum": ["resolved", "candidate", "unresolved", "not-followed"]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "referenceId",
+        "fromAnalysisId",
+        "toAnalysisIds",
+        "kind",
+        "resolution",
+        "location"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "targetId": {
+          "type": "string"
+        },
+        "scopeKey": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "pathSegments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keyKind": {
+          "type": "string"
+        }
+      },
+      "required": ["targetId", "scopeKey", "namespace", "pathSegments", "keyKind"],
+      "additionalProperties": false
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "accessId": {
+          "type": "string"
+        },
+        "analysisId": {
+          "type": "string"
+        },
+        "targetRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "operation": {
+          "type": "string"
+        },
+        "valueType": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accessId",
+        "analysisId",
+        "targetRefs",
+        "operation",
+        "valueType",
+        "location",
+        "evidence",
+        "fingerprint"
+      ],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "findingId": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": ["global", "dom", "css"]
+        },
+        "analysisId": {
+          "type": "string"
+        },
+        "accessRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "details": {
+          "type": "object"
+        },
+        "fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "findingId",
+        "ruleId",
+        "kind",
+        "analysisId",
+        "accessRefs",
+        "location",
+        "details",
+        "fingerprint"
+      ],
+      "additionalProperties": false
+    },
+    "unresolved": {
+      "type": "object",
+      "properties": {
+        "analysisId": {
+          "type": "string"
+        },
+        "referenceId": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "affectedCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "detail": {
+          "type": "string"
+        },
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        }
+      },
+      "required": ["reason", "affectedCapabilities"],
+      "additionalProperties": false
+    }
+  }
+}

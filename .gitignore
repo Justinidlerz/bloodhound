@@ -1,0 +1,7 @@
+node_modules/
+dist/
+target/
+native/*.node
+*.tgz
+outputs/
+log/

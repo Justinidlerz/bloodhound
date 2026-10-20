@@ -1,0 +1,5 @@
+body {
+  margin: 0;
+  --brand-color: #245bdb;
+  color: var(--brand-color);
+}

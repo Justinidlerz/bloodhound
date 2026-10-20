@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>HTML 扫描示例</title>
+    <base href="./assets/" />
+    <script type="importmap">
+      { "imports": { "settings": "./config.js" } }
+    </script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <p>扫描器读取资源，不执行页面脚本。</p>
+    <script>
+      window.sharedConfig = {};
+    </script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

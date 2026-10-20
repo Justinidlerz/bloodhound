@@ -1,0 +1,57 @@
+{
+  "name": "@bloodhound/core",
+  "version": "0.1.0",
+  "description": "Rust static resource scanner with a thin Node.js SDK",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.20.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": "./schemas/report.schema.json",
+    "./index-schema": "./schemas/index.schema.json"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "README.md",
+    "docs/support.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build:native": "node scripts/build-native.mjs",
+    "build:ts": "tsc --emitDeclarationOnly",
+    "build": "node scripts/clean-dist.mjs && pnpm build:native && pnpm build:ts",
+    "typecheck": "tsc --noEmit --skipLibCheck false",
+    "prepack": "pnpm build",
+    "example": "node examples/scan.mjs",
+    "example:html": "node examples/scan-html.mjs",
+    "format": "prettier --write src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json",
+    "format:check": "prettier --check src scripts examples schemas README.md docs/support.md docs/verification.md .github .changeset docs/releasing.md package.json tsconfig.json",
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "version:packages": "changeset version && node scripts/sync-native-version.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.3",
+    "@napi-rs/cli": "3.10.8",
+    "@types/node": "^22.19.0",
+    "prettier": "3.6.2",
+    "typescript": "^5.9.3"
+  },
+  "napi": {
+    "binaryName": "bloodhound"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  }
+}

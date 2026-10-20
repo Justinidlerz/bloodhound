@@ -1,0 +1,237 @@
+name: Release
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+
+jobs:
+  prepare:
+    name: Check source and prepare Changesets version
+    runs-on: ubuntu-24.04
+    outputs:
+      has_release: ${{ steps.release.outputs.has_release }}
+      version: ${{ steps.release.outputs.version }}
+      npm_tag: ${{ steps.release.outputs.npm_tag }}
+      matrix: ${{ steps.release.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: rustfmt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: cargo fmt --all --check
+      - name: Prepare release metadata
+        id: release
+        env:
+          RELEASE_MODE: ${{ github.event_name == 'pull_request' && 'beta' || github.event_name == 'push' && 'latest' || 'check' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/prepare-release.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-state
+          path: ${{ runner.temp }}/release-state.tgz
+          if-no-files-found: error
+
+  native:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-state
+          path: ${{ runner.temp }}/release-state
+      - name: Apply prepared version
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/release-state/release-state.tgz"
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm example
+      - run: pnpm example:html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: dist/*.node
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.sdk
+        with:
+          name: sdk-bindings
+          path: |
+            dist/*.js
+            dist/*.d.ts
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: example-reports-${{ matrix.platform }}
+          path: |
+            outputs/example/report.json
+            outputs/example-html/report.json
+          if-no-files-found: ignore
+
+  package:
+    name: Assemble npm package
+    needs: [prepare, native]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-state
+          path: ${{ runner.temp }}/release-state
+      - run: tar -xzf "$RUNNER_TEMP/release-state/release-state.tgz"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-bindings
+          path: dist
+      - name: Pack prebuilt binaries without rebuilding
+        run: node scripts/pack-ci.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bloodhound-core-package
+          path: artifacts/*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.prepare.outputs.npm_tag }}
+    needs: [prepare, package]
+    if: >-
+      needs.prepare.outputs.has_release == 'true' &&
+      vars.NPM_RELEASE_USER != '' &&
+      github.triggering_actor == vars.NPM_RELEASE_USER &&
+      (
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.draft == false &&
+         github.event.pull_request.head.repo.full_name == github.repository &&
+         github.event.pull_request.user.login == vars.NPM_RELEASE_USER) ||
+        (github.event_name == 'push' &&
+         github.ref == 'refs/heads/main' &&
+         github.actor == vars.NPM_RELEASE_USER)
+      )
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Check npm trusted publishing support
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
+          const [major, minor, patch] = version.split('.').map(Number);
+          if (!(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))))) {
+            throw new Error(`npm >= 11.5.1 required, found ${version}`);
+          }
+          NODE
+      - uses: actions/download-artifact@v4
+        with:
+          name: bloodhound-core-package
+          path: artifacts
+      - name: Publish assembled package with OIDC
+        env:
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+        run: |
+          shopt -s nullglob
+          packages=(artifacts/*.tgz)
+          test "${#packages[@]}" -eq 1
+          npm publish "${packages[0]}" --ignore-scripts --access public --provenance --tag "$NPM_TAG"
+      - name: Record published version in job summary
+        env:
+          PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+        run: printf 'Published version `%s` with npm tag `%s`.\n' "$PACKAGE_VERSION" "$NPM_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  record-release:
+    name: Commit release metadata and tag
+    needs: [prepare, publish]
+    if: github.event_name == 'push' && needs.prepare.outputs.npm_tag == 'latest'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-state
+          path: ${{ runner.temp }}/release-state
+      - name: Restore consumed Changesets and version files
+        run: |
+          rm -rf .changeset
+          tar -xzf "$RUNNER_TEMP/release-state/release-state.tgz"
+      - name: Commit and push version metadata
+        env:
+          PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A .changeset package.json pnpm-lock.yaml native/Cargo.toml Cargo.lock
+          if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
+          git commit -m "chore: release ${PACKAGE_VERSION} [skip ci]"
+          git tag -a "v${PACKAGE_VERSION}" -m "Release ${PACKAGE_VERSION}"
+          git push --atomic origin "HEAD:${RELEASE_BRANCH}" "refs/tags/v${PACKAGE_VERSION}"
