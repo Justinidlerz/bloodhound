@@ -194,7 +194,7 @@ jobs:
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: |
           shopt -s nullglob
-          packages=(artifacts/*.tgz)
+          packages=(./artifacts/*.tgz)
           test "${#packages[@]}" -eq 1
           npm publish "${packages[0]}" --ignore-scripts --access public --provenance --tag "$NPM_TAG"
       - name: Record published version in job summary
