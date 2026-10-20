@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
-import { scanJs, GlobalIndex } from '@bloodhound/core';
+import { scanJs, GlobalIndex } from '@bloodhound-rs/core';
 
 const inputPath = fileURLToPath(new URL('./fixtures/app.js', import.meta.url));
 const outputDirectory = new URL('../outputs/example/', import.meta.url);

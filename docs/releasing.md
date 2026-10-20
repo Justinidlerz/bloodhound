@@ -19,7 +19,7 @@
 pnpm changeset
 ```
 
-选择 `@bloodhound/core` 的 patch、minor 或 major，并填写变更说明。生成的 `.changeset/*.md` 随代码进入 PR。仅文档或示例改动可不添加 changeset，没有版本变更时不发布。
+选择 `@bloodhound-rs/core` 的 patch、minor 或 major，并填写变更说明。生成的 `.changeset/*.md` 随代码进入 PR。仅文档或示例改动可不添加 changeset，没有版本变更时不发布。
 
 | 阶段           | 版本处理                                                                                     |
 | -------------- | -------------------------------------------------------------------------------------------- |

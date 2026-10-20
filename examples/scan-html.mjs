@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
-import { scanHtml, GlobalIndex } from '@bloodhound/core';
+import { scanHtml, GlobalIndex } from '@bloodhound-rs/core';
 
 const inputPath = fileURLToPath(new URL('./fixtures/html/index.html', import.meta.url));
 const outputDirectory = new URL('../outputs/example-html/', import.meta.url);

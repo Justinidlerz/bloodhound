@@ -1,4 +1,4 @@
-# @bloodhound/core
+# @bloodhound-rs/core
 
 A Rust SDK for static analysis of browser resources. Rust exports the public methods directly, and napi-rs generates the npm loader and method declarations.
 
@@ -45,7 +45,7 @@ The examples import the SDK by package name and read local source files without 
 ## SDK
 
 ```ts
-import { scanJs, scanHtml, scanResource, GlobalIndex } from '@bloodhound/core';
+import { scanJs, scanHtml, scanResource, GlobalIndex } from '@bloodhound-rs/core';
 
 const report = await scanJs('./dist/app.js', {
   scriptMode: 'classic',
