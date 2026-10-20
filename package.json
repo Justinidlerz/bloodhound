@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Rust static resource scanner with a thin Node.js SDK",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
