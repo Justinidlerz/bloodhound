@@ -75,7 +75,8 @@ jobs:
           path: ${{ runner.temp }}/release-state
       - name: Apply prepared version
         shell: bash
-        run: tar -xzf "$RUNNER_TEMP/release-state/release-state.tgz"
+        working-directory: ${{ runner.temp }}/release-state
+        run: tar -xzf release-state.tgz -C "$GITHUB_WORKSPACE"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
