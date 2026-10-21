@@ -1,9 +1,13 @@
+mod bridge;
 mod engine;
 mod js;
 mod markup;
 mod model;
 mod query;
+mod report;
 mod resolve;
+mod timing;
+use bridge::{CheckpointInput, JsonOutput, ReportInput};
 use napi::{
     Env, ScopedTask,
     bindgen_prelude::{AsyncTask, FnArgs, Function, FunctionRef, Object, ObjectRef, Unknown},
@@ -81,7 +85,11 @@ fn start(
     let flag = Arc::new(AtomicBool::new(false));
     if let Some(options) = options {
         for key in Object::keys(&options)? {
-            if key != "signal" {
+            if key == "resume" {
+                if let Some(value) = options.get::<CheckpointInput>(&key)? {
+                    config[key] = value.0;
+                }
+            } else if key != "signal" {
                 if let Some(value) = options.get::<Value>(&key)? {
                     config[&key] = value;
                 }
@@ -126,8 +134,9 @@ fn start(
     }))
 }
 #[napi(
-    ts_args_type = "entries: ScanEntry[], options?: ScanOptions",
-    ts_return_type = "Promise<Report>"
+    ts_args_type = "entries: ScanEntry[], options?: T",
+    ts_generic_types = "T extends ScanOptions = {}",
+    ts_return_type = "Promise<ScanResult<T>>"
 )]
 pub fn scan(
     env: Env,
@@ -138,14 +147,7 @@ pub fn scan(
 }
 fn source(input: Value) -> Value {
     match input.as_str() {
-        Some(value)
-            if value.starts_with("http:")
-                || value.starts_with("https:")
-                || value.starts_with("file:") =>
-        {
-            json!({"type":"url","url":value})
-        }
-        Some(value) => json!({"type":"file","path":value}),
+        Some(value) => json!({"type":"content","content":value}),
         None => input,
     }
 }
@@ -168,8 +170,9 @@ fn single_entry(
     )
 }
 #[napi(
-    ts_args_type = "input: Source | string, options?: ScanOptions",
-    ts_return_type = "Promise<Report>"
+    ts_args_type = "input: Source | string, options?: T",
+    ts_generic_types = "T extends ScanOptions = {}",
+    ts_return_type = "Promise<ScanResult<T>>"
 )]
 pub fn scan_js(
     env: Env,
@@ -179,8 +182,9 @@ pub fn scan_js(
     single_entry(env, "js", input, options)
 }
 #[napi(
-    ts_args_type = "input: Source | string, options?: ScanOptions",
-    ts_return_type = "Promise<Report>"
+    ts_args_type = "input: Source | string, options?: T",
+    ts_generic_types = "T extends ScanOptions = {}",
+    ts_return_type = "Promise<ScanResult<T>>"
 )]
 pub fn scan_html(
     env: Env,
@@ -190,8 +194,9 @@ pub fn scan_html(
     single_entry(env, "html", input, options)
 }
 #[napi(
-    ts_args_type = "entry: ScanEntry, options?: ScanOptions",
-    ts_return_type = "Promise<Report>"
+    ts_args_type = "entry: ScanEntry, options?: T",
+    ts_generic_types = "T extends ScanOptions = {}",
+    ts_return_type = "Promise<ScanResult<T>>"
 )]
 pub fn scan_resource(
     env: Env,
@@ -206,22 +211,28 @@ pub fn scan_resource(
     )
 }
 #[napi(
-    ts_args_type = "checkpoint: Checkpoint, options?: ScanOptions",
-    ts_return_type = "Promise<Report>"
+    ts_args_type = "checkpoint: Checkpoint, options?: T",
+    ts_generic_types = "T extends ScanOptions = {}",
+    ts_return_type = "Promise<ScanResult<T>>"
 )]
 pub fn resume_scan(
     env: Env,
-    checkpoint: Value,
+    checkpoint: CheckpointInput,
     options: Option<Object>,
 ) -> napi::Result<AsyncTask<ScanTask>> {
-    start(env, json!([]), options, json!({"resume":checkpoint}))
+    start(env, json!([]), options, json!({"resume":checkpoint.0}))
 }
 #[napi(
     ts_args_type = "report: unknown",
     ts_return_type = "asserts report is Report"
 )]
-pub fn validate_report(report: Value) -> napi::Result<()> {
-    engine::validate(&report).map_err(napi::Error::from_reason)
+pub fn validate_report(report: ReportInput) -> napi::Result<()> {
+    engine::validate(&report.0).map_err(napi::Error::from_reason)
+}
+#[napi(ts_args_type = "report: Report", ts_return_type = "Manifest")]
+pub fn compact_report(report: ReportInput) -> napi::Result<JsonOutput> {
+    engine::validate(&report.0).map_err(napi::Error::from_reason)?;
+    Ok(JsonOutput(report::compact(&report.0)))
 }
 #[napi]
 pub fn engine_version() -> String {
@@ -235,14 +246,14 @@ pub struct GlobalIndex {
 #[napi]
 impl GlobalIndex {
     #[napi(constructor, ts_args_type = "report: Report")]
-    pub fn new(report: Value) -> napi::Result<Self> {
+    pub fn new(report: ReportInput) -> napi::Result<Self> {
         Ok(Self {
-            inner: query::Index::new(report).map_err(napi::Error::from_reason)?,
+            inner: query::Index::new(report.0).map_err(napi::Error::from_reason)?,
         })
     }
     #[napi(getter, ts_return_type = "Report")]
-    pub fn report(&self) -> Value {
-        self.inner.report.clone()
+    pub fn report(&self) -> JsonOutput {
+        JsonOutput(self.inner.report.clone())
     }
     #[napi(ts_return_type = "Target[]")]
     pub fn find_targets(
@@ -250,7 +261,7 @@ impl GlobalIndex {
         path_segments: Vec<String>,
         namespace: Option<String>,
         scope_key: Option<String>,
-    ) -> napi::Result<Value> {
+    ) -> napi::Result<JsonOutput> {
         let mut args = json!({"pathSegments":path_segments});
         if let Some(namespace) = namespace {
             args["namespace"] = json!(namespace);
@@ -263,22 +274,26 @@ impl GlobalIndex {
     #[napi(
         ts_return_type = "{ access: GlobalAccess; analysis: AnalysisInstance; resource: Resource }[]"
     )]
-    pub fn sources(&self, target_id: String) -> napi::Result<Value> {
+    pub fn sources(&self, target_id: String) -> napi::Result<JsonOutput> {
         self.invoke("sources", json!({"id":target_id}))
     }
     #[napi(ts_return_type = "GlobalAccess[]")]
-    pub fn accesses(&self, analysis_id: String) -> napi::Result<Value> {
+    pub fn accesses(&self, analysis_id: String) -> napi::Result<JsonOutput> {
         self.invoke("accesses", json!({"id":analysis_id}))
     }
     #[napi(ts_return_type = "GlobalAccess[]")]
-    pub fn resource_accesses(&self, resource_id: String) -> napi::Result<Value> {
+    pub fn resource_accesses(&self, resource_id: String) -> napi::Result<JsonOutput> {
         self.invoke("resourceAccesses", json!({"id":resource_id}))
     }
     #[napi(
         ts_args_type = "targetId: string, options?: { limit?: number; offset?: number; maxVisits?: number }",
         ts_return_type = "{ paths: { entryAnalysisId: string; analysisIds: string[]; referenceIds: string[] }[]; truncated: boolean; nextOffset: number }"
     )]
-    pub fn entry_paths(&self, target_id: String, options: Option<Value>) -> napi::Result<Value> {
+    pub fn entry_paths(
+        &self,
+        target_id: String,
+        options: Option<Value>,
+    ) -> napi::Result<JsonOutput> {
         let mut args = options.unwrap_or(json!({}));
         if !args.is_object() {
             return Err(napi::Error::from_reason(
@@ -291,50 +306,56 @@ impl GlobalIndex {
     #[napi(
         ts_return_type = "{ targetId: string; accessIds: string[]; analysisIds: string[]; valueTypes: string[]; certainty: 'static-candidate' }[]"
     )]
-    pub fn conflicts(&self) -> napi::Result<Value> {
+    pub fn conflicts(&self) -> napi::Result<JsonOutput> {
         self.invoke("conflicts", json!({}))
     }
     #[napi(
         ts_return_type = "{ targetId: string; candidates: string[]; certainty: 'static-candidate' }[]"
     )]
-    pub fn resolve_unbound(&self) -> napi::Result<Value> {
+    pub fn resolve_unbound(&self) -> napi::Result<JsonOutput> {
         self.invoke("resolveUnbound", json!({}))
     }
 }
 impl GlobalIndex {
-    fn invoke(&self, operation: &str, args: Value) -> napi::Result<Value> {
+    fn invoke(&self, operation: &str, args: Value) -> napi::Result<JsonOutput> {
         self.inner
             .invoke(operation, &args)
+            .map(JsonOutput)
             .map_err(napi::Error::from_reason)
     }
 }
-fn report_query(report: Value, operation: &str, args: Value) -> napi::Result<Value> {
-    query::Index::new(report)
+fn report_query(report: ReportInput, operation: &str, args: Value) -> napi::Result<JsonOutput> {
+    query::Index::new(report.0)
         .and_then(|index| index.invoke(operation, &args))
+        .map(JsonOutput)
         .map_err(napi::Error::from_reason)
 }
 #[napi(
     ts_args_type = "before: Report, after: Report",
     ts_return_type = "{ added: GlobalAccess[]; removed: GlobalAccess[]; changed: { before: GlobalAccess; after: GlobalAccess }[] }"
 )]
-pub fn diff_reports(before: Value, after: Value) -> napi::Result<Value> {
-    report_query(before, "diffReports", json!({"after":after}))
+pub fn diff_reports(before: ReportInput, after: ReportInput) -> napi::Result<JsonOutput> {
+    report_query(before, "diffReports", json!({"after":after.0}))
 }
 #[napi(
     ts_args_type = "report: Report, reportId?: string",
     ts_return_type = "Pick<Report, 'indexSchemaVersion' | 'scopeKey' | 'entryAnalysisIds' | 'resources' | 'analysisInstances' | 'references' | 'globalTargets' | 'globalAccesses' | 'findings' | 'unresolved'> & { reportId: string }"
 )]
-pub fn index_artifact(report: Value, report_id: Option<String>) -> napi::Result<Value> {
+pub fn index_artifact(report: ReportInput, report_id: Option<String>) -> napi::Result<JsonOutput> {
     let id = report_id
         .map(Value::String)
-        .unwrap_or_else(|| report["scanId"].clone());
+        .unwrap_or_else(|| report.0["scanId"].clone());
     report_query(report, "indexArtifact", json!({"reportId":id}))
 }
 #[napi(
     ts_args_type = "report: Report, type: 'build' | 'page', metadata?: Record<string, unknown>",
     ts_return_type = "Record<string, unknown>"
 )]
-pub fn adapt_report(report: Value, kind: String, metadata: Option<Value>) -> napi::Result<Value> {
+pub fn adapt_report(
+    report: ReportInput,
+    kind: String,
+    metadata: Option<Value>,
+) -> napi::Result<JsonOutput> {
     report_query(
         report,
         "adaptReport",
@@ -345,10 +366,17 @@ pub fn adapt_report(report: Value, kind: String, metadata: Option<Value>) -> nap
     ts_args_type = "report: Report, input: { resourceUrl?: string; contentHash?: string; line?: number; column?: number; pathSegments?: string[] }",
     ts_return_type = "{ accessId: string; attribution: 'static_candidate' }[]"
 )]
-pub fn runtime_candidates(report: Value, input: Value) -> napi::Result<Value> {
+pub fn runtime_candidates(report: ReportInput, input: Value) -> napi::Result<JsonOutput> {
     report_query(report, "runtimeCandidates", input)
 }
 #[napi(ts_return_type = "{ budgets: Budgets; versions: Record<string, string> }")]
 pub fn defaults() -> Value {
     json!({"budgets":model::Budgets::default(),"versions":{"scanner":env!("CARGO_PKG_VERSION"),"rules":"1","adapters":"1","parser":"oxc-0.154.0","configuration":"1"}})
 }
+
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
+#[path = "tests/bindings.rs"]
+mod tests;

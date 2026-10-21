@@ -30,8 +30,12 @@ pub enum Source {
     },
     Content {
         content: String,
-        #[serde(rename = "resourceUrl")]
-        resource_url: String,
+        #[serde(
+            rename = "resourceUrl",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        resource_url: Option<String>,
     },
 }
 impl Source {
@@ -48,7 +52,12 @@ impl Source {
                 .map_err(|_| "invalid-file-path".into())
             }
             Self::Url { url } => Ok(url.clone()),
-            Self::Content { resource_url, .. } => Ok(resource_url.clone()),
+            Self::Content {
+                resource_url,
+                content,
+            } => Ok(resource_url
+                .clone()
+                .unwrap_or_else(|| format!("memory:{}", content_hash(content)))),
         }
     }
 }
@@ -187,3 +196,7 @@ pub fn location(source: &str, start: usize, end: usize) -> Value {
 pub fn text(v: &Value) -> &str {
     v.as_str().unwrap_or("")
 }
+
+#[cfg(test)]
+#[path = "tests/model.rs"]
+mod tests;

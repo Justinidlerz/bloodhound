@@ -1,3 +1,6 @@
+import type { Manifest } from './manifest.js';
+export type * from './manifest.js';
+
 export type ResourceKind = 'js' | 'html' | 'css' | 'asset';
 export type ScriptMode = 'classic' | 'module' | 'unknown';
 export type Environment = 'window' | 'worker' | 'unknown';
@@ -5,7 +8,7 @@ export type ScanStatus = 'completed' | 'partial' | 'failed';
 export type Source =
   | { type: 'file'; path: string }
   | { type: 'url'; url: string }
-  | { type: 'content'; content: string; resourceUrl: string };
+  | { type: 'content'; content: string; resourceUrl?: string };
 export interface ImportMap {
   imports?: Record<string, string | null>;
   scopes?: Record<string, Record<string, string | null>>;
@@ -144,6 +147,7 @@ export interface ScanEntry {
   resourceUrl?: string;
 }
 export interface Report {
+  timings?: ScanTimings;
   schemaVersion: 1;
   indexSchemaVersion: 1;
   scannerVersion: string;
@@ -172,16 +176,56 @@ export interface Report {
     elapsedMs: number;
   };
 }
+/** Exclusive coordinator wall times, measured with a monotonic clock. */
+export type ScanStage =
+  | 'setup'
+  | 'load'
+  | 'analysis'
+  | 'records'
+  | 'locations'
+  | 'deduplication'
+  | 'dependencies'
+  | 'sourceMaps'
+  | 'moduleLinking'
+  | 'checkpoint'
+  | 'finalize'
+  | 'validation'
+  | 'compact'
+  | 'other';
+export interface ScanTimings {
+  /** Native work through result construction; excludes final output I/O and bindings. */
+  totalMs: number;
+  /** Missing stages did not run. These values sum to totalMs. */
+  stages: Partial<Record<ScanStage, number>> & { other: number };
+  /** Aggregated by resource URL and kind, across execution contexts and analysis passes. */
+  resources: {
+    kind: ResourceKind;
+    url?: string;
+    inline?: { offset: number; parentUrl?: string };
+    stages: Partial<Record<ScanStage, number>>;
+    /** Tasks overlap across workers. JS subphases are included in analysis. Not CPU times. */
+    tasks: Partial<
+      Record<
+        'load' | 'analysis' | 'cacheHit' | 'jsParse' | 'jsSemantic' | 'jsVisit',
+        { count: number; elapsedMs: number }
+      >
+    >;
+  }[];
+}
 export interface ScanOptions {
+  /** Include stage and per-resource timings in the returned result. Off by default. */
+  timings?: boolean;
+  /** Compact findings by default; full reports include every read and index record. */
+  reportFormat?: 'compact' | 'full';
   scriptMode?: ScriptMode;
   executionEnvironment?: Environment;
-  /** 离线资源的逻辑地址；直接扫描 URL 时无需重复设置。 */
+  /** Original resource URL for source text or an offline file. */
   resourceUrl?: string;
-  /** 补充文档基准；HTML 中的有效 base 标签会被自动读取。 */
+  /** Document base fallback. Valid HTML base elements are read automatically. */
   baseUrl?: string;
-  /** 补充页面上下文，供单独扫描 JS 等场景使用；HTML 内的 Import Map 自动读取。 */
+  /** Page context for standalone JavaScript. HTML import maps are read automatically. */
   importMap?: ImportMap;
-  /** 外部传入 importMap 中相对地址的解析基准。 */
+  /** Resolution base for a supplied import map. */
   importMapBaseUrl?: string;
   publicPath?: string;
   scopeKey?: string;
@@ -191,7 +235,7 @@ export interface ScanOptions {
   budgets?: Partial<Budgets>;
   signal?: AbortSignal;
   access?: { protocols?: string[]; hosts?: string[]; fileRoots?: string[] };
-  /** 用本地文件或源码替代已解析的资源 URL；不是 HTML Import Map，普通页面扫描无需设置。 */
+  /** Substitute local files or content for resolved URLs, for offline scanning. */
   resourceMappings?: Record<string, Source>;
   requestHeaders?: Record<string, Record<string, string>>;
   proxy?: string;
@@ -202,6 +246,13 @@ export interface ScanOptions {
   sourceMaps?: boolean;
   resume?: Checkpoint;
 }
+export type ScanResult<T extends ScanOptions> = T extends { reportFormat: 'full' }
+  ? Report
+  : 'reportFormat' extends keyof T
+    ? 'full' extends T['reportFormat']
+      ? Manifest | Report
+      : Manifest
+    : Manifest;
 export type StreamRecord =
   | { type: 'resetAnalysis'; value: { analysisId: string } }
   | {

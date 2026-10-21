@@ -137,6 +137,30 @@ const collections = {
   findings: arr(ref('finding')),
   unresolved: arr(ref('unresolved')),
 };
+const elapsedMs = { type: 'number', minimum: 0 };
+const timingStages = { type: 'object', additionalProperties: elapsedMs };
+const timings = record({
+  totalMs: elapsedMs,
+  stages: timingStages,
+  resources: arr(
+    record(
+      {
+        kind: { enum: ['js', 'html', 'css', 'asset'] },
+        url: str,
+        inline: record({ offset: { type: 'integer', minimum: 0 }, parentUrl: str }, ['offset']),
+        stages: timingStages,
+        tasks: {
+          type: 'object',
+          additionalProperties: record({
+            count: { type: 'integer', minimum: 1 },
+            elapsedMs,
+          }),
+        },
+      },
+      ['kind', 'stages', 'tasks'],
+    ),
+  ),
+});
 const report = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   $id: 'https://bloodhound.dev/schemas/report-v1.json',
@@ -167,8 +191,9 @@ const report = {
       elapsedMs: num,
     }),
   }),
-  $defs: defs,
+  $defs: { ...defs, timings },
 };
+report.properties.timings = ref('timings');
 const index = {
   $schema: report.$schema,
   $id: 'https://bloodhound.dev/schemas/index-v1.json',

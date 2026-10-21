@@ -28,6 +28,20 @@ The scanner uses the following components:
 
 Oxc provides scope and symbol analysis directly in Rust. Babel fits teams maintaining only JS/TS, while SWC fits existing SWC plugin infrastructure. Either alternative still requires the analysis layer described here. Native extensions require platform builds covering supported CI and development environments. Pin compatible Oxc components together and measure performance on real artifacts.
 
+## Rust module layout
+
+| Directory or module                      | Responsibility                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| `engine/loading.rs`                      | Resource fetching, access restrictions, and download budgets       |
+| `engine/state.rs`, `engine/queue.rs`     | Queue state, deduplication, scheduling, summaries, and checkpoints |
+| `engine/analysis.rs`, `engine/report.rs` | Analyze loaded sources, assemble records, validate full reports    |
+| `js/evaluation.rs`, `js/values.rs`       | Bounded expression evaluation and abstract values                  |
+| `js/bindings.rs`, `js/visitor.rs`        | Bindings, module declarations, scopes, and control flow            |
+| `js/dependencies.rs`, `js/effects.rs`    | Loading patterns, global operations, and DOM effects               |
+| `markup/html.rs`, `markup/css.rs`        | HTML extraction and CSS parsing                                    |
+| `report/`, `query.rs`                    | Compact manifests and full-report index queries                    |
+| `lib.rs`, `bridge.rs`                    | napi exports, cancellation, and JSON conversion                    |
+
 # Inputs and entry flow
 
 ## Input model
@@ -37,7 +51,7 @@ The input model supplies resource identity and analysis context:
 | Field                 | Meaning and handling                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | entry.kind            | js or html, explicitly selected by the caller rather than inferred from a URL suffix                                                 |
-| entry.source          | One of file, url, or content. Source text also requires a resource identifier                                                        |
+| entry.source          | One of file, url, or content. A content URL is optional; relative dependencies need a base                                           |
 | resourceUrl / baseUrl | Logical resource address and base for relative resolution. Local mirrors can map to online logical URLs                              |
 | scriptMode            | classic, module, or unknown. HTML derives this from script attributes. JavaScript callers provide it or use a known format           |
 | executionEnvironment  | window, worker, or unknown, defining host-global semantics                                                                           |
@@ -142,6 +156,14 @@ Dependency adapters preserve evidence when resolution is incomplete:
 Dispatch resolution by protocol. Browser resources follow URL and import map algorithms without implicit extension completion or Node package directory searches. Import maps retain effective snapshots and match scopes by importer. Dynamically registered dependencies with indeterminate timing produce missing-context records.
 
 Separate resource content from analysis instances. Identical content can reuse parsing results, while different URLs, script modes, import maps, hosts, or publicPath contexts produce separate instances. Cycles prevent repeated analysis without removing reference edges. Preserve async, defer, and conditional loading as attributes without inferring one definitive execution order.
+
+# Compact output and full reports
+
+`scanJs` and `scanHtml` interpret strings as source text. Explicit file and URL source objects select loading. Unnamed text uses an internal opaque identity, never a fabricated document URL. Relative dependencies without a base are reported as `missing-base-url`.
+
+The default compact manifest contains source records, dependency edges, global modifications, DOM/CSS findings, and counted coverage gaps. It omits hashes, repeated contexts, read-only accesses, and duplicate global-mutation findings. `exampleLocation` is one sample from a gap group. Scan status and exact gap counts are retained.
+
+`reportFormat: 'full'` exposes the detailed model below for indexing and diffs. `compactReport(report)` projects a full report into a manifest. SDK calls return objects; stdin/stdout examples handle text IO and leave file persistence to the caller.
 
 # Global variable indexes and data structures
 
@@ -283,7 +305,7 @@ Delivery is organized around these capabilities and acceptance criteria:
 | Dynamic loading and extended rules   | webpack / Vite adapters, bounded evaluation, DOM / CSS rules, and cross-resource summaries            | Recover dependencies in supported patterns without guessing unknown patterns. Gaps include reasons and locations                                   |
 | Platform integration                 | Build / page adapters, index artifacts, version diffs, and runtime evidence association               | Every finding traces to a resource and location. Source candidates do not become runtime facts. Platforms can evaluate scan gaps                   |
 
-Acceptance uses existing or approved real artifact samples and labeled datasets, without adding unit tests during the design phase. Measure precision, recall, dependency resolution completion, consistency between CI and HTML scans with matching context, unknown-target proportion, scan duration, and peak memory. Deduplicate recall by labeled targets and operation locations. Unknown items do not count as resolved. Establish versioned performance thresholds from the initial benchmark rather than substituting standalone parser benchmarks for end-to-end results.
+Acceptance combines the [automated test suites](testing.md) with real artifact samples and labeled datasets. Measure precision, recall, dependency resolution completion, consistency between CI and HTML scans with matching context, unknown-target proportion, scan duration, and peak memory. Deduplicate recall by labeled targets and operation locations. Unknown items do not count as resolved. Establish versioned performance thresholds from the initial benchmark rather than substituting standalone parser benchmarks for end-to-end results.
 
 Begin platform rollout in report-only mode. Record scanner, rule, adapter, and index format versions independently. Compare upgrades against the same labeled dataset. Rollback restores the previous component combination and configuration snapshot. Historical reports retain their original versions and conclusions.
 

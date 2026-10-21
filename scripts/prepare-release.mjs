@@ -28,7 +28,7 @@ if (hasRelease && mode === 'beta') {
 }
 if (process.env.GITHUB_REPOSITORY) {
   const repository = process.env.GITHUB_REPOSITORY;
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid GITHUB_REPOSITORY');
+  if (!/^[\w-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid GITHUB_REPOSITORY');
   pkg.repository = { type: 'git', url: `git+https://github.com/${repository}.git` };
 }
 writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');

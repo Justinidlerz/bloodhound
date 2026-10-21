@@ -7,12 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      stage_run_id:
-        description: 'Stage original archives from a completed main-branch Release run (empty = build check)'
+      publish_run_id:
+        description: 'Publish original archives from a completed main-branch Release run (empty = build check)'
         required: false
         type: string
-      stage_tag:
-        description: 'npm tag applied when the staged packages are approved'
+      publish_tag:
+        description: 'npm tag applied to published packages'
         type: choice
         options: [latest, beta]
         default: latest
@@ -29,7 +29,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name != 'workflow_dispatch' || inputs.stage_run_id == ''
+    if: github.event_name != 'workflow_dispatch' || inputs.publish_run_id == ''
     name: Check source and prepare Changesets version
     runs-on: ubuntu-24.04
     outputs:
@@ -54,6 +54,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: cargo fmt --all --check
+      - run: pnpm test:scripts
       - name: Prepare release metadata
         id: release
         env:
@@ -99,10 +100,16 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test:rust
       - run: pnpm build
       - run: pnpm typecheck
-      - run: pnpm example
-      - run: pnpm example:html
+      - run: pnpm test:sdk
+      - name: Run examples and save their JSON output
+        shell: bash
+        run: |
+          mkdir -p outputs/example outputs/example-html
+          node examples/scan.mjs > outputs/example/report.json
+          node examples/scan-html.mjs > outputs/example-html/report.json
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.platform }}
@@ -166,7 +173,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Stage ${{ needs.prepare.outputs.npm_tag }} for approval
+    name: Publish ${{ needs.prepare.outputs.npm_tag }}
     needs: [prepare, package]
     if: >-
       needs.prepare.outputs.has_release == 'true' &&
@@ -191,7 +198,7 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Check npm staged publishing support
+      - name: Check npm publishing runtime
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
@@ -205,19 +212,19 @@ jobs:
         with:
           name: bloodhound-packages
           path: artifacts
-      - name: Stage platform packages, then core
+      - name: Publish and verify platform packages, then core
         env:
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: node artifacts/publish-ci.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: npm-stage-results-${{ github.run_attempt }}
-          path: artifacts/stage-results.json
+          name: npm-publish-results-${{ github.run_attempt }}
+          path: artifacts/publish-results.json
           if-no-files-found: ignore
 
-  record-stage:
-    name: Record staged version metadata
+  record-release:
+    name: Record published version metadata
     needs: [prepare, publish]
     if: github.event_name == 'push' && needs.prepare.outputs.npm_tag == 'latest'
     runs-on: ubuntu-24.04
@@ -245,14 +252,15 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A .changeset package.json pnpm-lock.yaml native/Cargo.toml Cargo.lock npm
           if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
-          git commit -m "chore: stage ${PACKAGE_VERSION} [skip ci]"
-          git push origin "HEAD:${RELEASE_BRANCH}"
+          git commit -m "chore: release ${PACKAGE_VERSION} [skip ci]"
+          git tag -a "v${PACKAGE_VERSION}" -m "Release ${PACKAGE_VERSION}"
+          git push --atomic origin "HEAD:${RELEASE_BRANCH}" "refs/tags/v${PACKAGE_VERSION}"
 
-  stage-existing:
-    name: Stage original release archives for approval
+  publish-existing:
+    name: Publish original release archives
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      inputs.stage_run_id != '' &&
+      inputs.publish_run_id != '' &&
       github.ref == 'refs/heads/main' &&
       vars.NPM_RELEASE_USER != '' &&
       github.triggering_actor == vars.NPM_RELEASE_USER
@@ -273,7 +281,7 @@ jobs:
       - name: Validate original workflow run
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ inputs.stage_run_id }}
+          SOURCE_RUN_ID: ${{ inputs.publish_run_id }}
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
@@ -295,17 +303,17 @@ jobs:
         with:
           name: bloodhound-packages
           path: artifacts
-          run-id: ${{ inputs.stage_run_id }}
+          run-id: ${{ inputs.publish_run_id }}
           github-token: ${{ github.token }}
-      - name: Apply current staging script to original archives
+      - name: Apply current publishing script to original archives
         run: cp scripts/publish-ci.mjs artifacts/publish-ci.mjs
-      - name: Stage missing versions and verify existing versions
+      - name: Publish missing versions and verify existing versions
         env:
-          NPM_TAG: ${{ inputs.stage_tag }}
+          NPM_TAG: ${{ inputs.publish_tag }}
         run: node artifacts/publish-ci.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: npm-stage-results-${{ github.run_attempt }}
-          path: artifacts/stage-results.json
+          name: npm-publish-results-${{ github.run_attempt }}
+          path: artifacts/publish-results.json
           if-no-files-found: ignore

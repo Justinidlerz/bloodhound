@@ -1,54 +1,70 @@
-# Build and release
+# Build and publish releases
 
-This guide describes versioning and publishing for maintainers. The workflow is `.github/workflows/release.yml`, and the main branch is `main`.
+This guide covers Changesets versioning and automatic npm publishing through `.github/workflows/release.yml`.
 
-| Trigger                                                                                                                                  | Behavior                                                                                                                        |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| PR opened, updated, reopened, or marked ready                                                                                            | Check source formatting, build five native targets, check types, run the existing JS / HTML examples, and assemble npm packages |
-| Non-draft PR from the same repository, with both author and triggering actor matching `NPM_RELEASE_USER`, and a changeset version change | Publish beta after checks pass, without writing version files back to the PR branch                                             |
-| Push to `main` by `NPM_RELEASE_USER`, with a changeset version change                                                                    | Publish latest after checks pass, commit version metadata, and push a version tag                                               |
-| Manual run                                                                                                                               | Check, build, and pack without publishing                                                                                       |
+## Workflow
+
+| Trigger                                                                                                                                  | Behavior                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR opened, updated, reopened, or marked ready                                                                                            | Check formatting, run script tests, build five native targets, run Rust and SDK tests, check types, run JS / HTML examples, and assemble six archives |
+| Non-draft PR from the same repository, with both author and triggering actor matching `NPM_RELEASE_USER`, and a changeset version change | Publish a beta version without writing version files back to the PR branch                                                                            |
+| Push to `main` by `NPM_RELEASE_USER`, with a changeset version change                                                                    | Publish a stable version, then commit version metadata, consume Changesets, and create a release tag                                                  |
+| Manual run with an empty `publish_run_id`                                                                                                | Check, build, and pack without publishing                                                                                                             |
+| Manual run with `publish_run_id`                                                                                                         | Recover missing packages from the original release archives                                                                                           |
 
 Native targets are defined in `.github/native-targets.json`: Linux glibc x64 / arm64, macOS x64 / arm64, and Windows x64. Keep `package.json` → `napi.targets` aligned with this matrix. `pnpm platforms:sync` checks that they match and uses napi-rs to generate `npm/<platform>/package.json`.
 
-Core contains the loader, declarations, schemas, and documentation. Each of the five platform packages contains its own binary and restricts installation with `os`, `cpu`, and `libc`. Core uses `workspace:*` optional dependencies in the repository. `pnpm pack` converts these to exact versions.
+Core contains the loader, declarations, schemas, and documentation. Each of the five platform packages contains one binary and restricts installation with `os`, `cpu`, and `libc`. Core uses `workspace:*` optional dependencies in the repository. Packing converts these to exact versions.
 
-The assembly job runs `pnpm pack:release`. It checks that all five binaries exist, core contains no binaries, and each platform package contains exactly one binary. It produces six archives and a release manifest with SHA-512 integrity values. The publishing job publishes platform packages first, confirms their version integrity values in npm, and then publishes core without rebuilding. Retrying skips already published versions with matching content and stops if content differs.
+Assembly checks that all five binaries exist, core contains no binaries, and each platform package contains exactly one binary. It produces six archives and a release manifest with SHA-512 integrity values.
+
+The publisher verifies all archives before contacting npm, then publishes platform packages followed by core using `npm publish`. After each publish, it checks public registry integrity every 15 seconds for up to 10 minutes. It stops on a timeout, mismatched content, or a failed command. Core is published only after all platform versions are verified. No npm approval click is required for new direct releases.
 
 ## Use Changesets
 
-For a change that requires a release, run this command from the repository root:
+Run this command from the repository root:
 
 ```sh
 pnpm changeset
 ```
 
-Select a patch, minor, or major release for `@bloodhound-rs/core` and write a description for SDK consumers. All six packages belong to one Changesets fixed group and receive the same version. Include the generated `.changeset/*.md` file in the PR. Documentation-only or example-only changes do not require a changeset. Without a version change, the workflow does not publish.
+Select a patch, minor, or major release for `@bloodhound-rs/core` and write a description for SDK consumers. All six packages belong to one Changesets fixed group and receive the same version. Include the generated `.changeset/*.md` file in the PR. Documentation-only or example-only changes do not require a changeset. Without a version change, the workflow does not publish packages.
 
-| Stage                  | Version handling                                                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| PR                     | Changesets calculates the next stable version, then appends `-beta.<PR-number>.<run-ID>.<attempt>` and uses the npm `beta` tag |
-| Main branch            | Changesets updates versions and `CHANGELOG.md`, consumes changeset files, and uses the npm `latest` tag                        |
-| Before native builds   | Synchronize the npm version to `native/Cargo.toml` and `Cargo.lock`. Reports use the compiled Rust version                     |
-| After a stable release | Commit version files, changelogs, and changeset updates, then atomically push the commit and `v<version>` tag                  |
+| Stage                                 | Version handling                                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| PR                                    | Calculate the next version, append `-beta.<PR-number>.<run-ID>.<attempt>`, and publish with the `beta` tag             |
+| Main branch                           | Update versions and changelogs, consume changeset files, and publish with the `latest` tag                             |
+| Before native builds                  | Synchronize the npm version to `native/Cargo.toml` and `Cargo.lock`. Reports use the compiled Rust version             |
+| After verified main-branch publishing | Commit metadata with `chore: release <version> [skip ci]`, create `v<version>`, and push the commit and tag atomically |
 
 To preview version changes locally, run `pnpm version:packages`. It modifies the working tree without committing, pushing, or publishing. `.changeset/config.json` keeps `commit` set to `false`.
 
 ## Configure GitHub and npm
 
-Configure these settings before publishing:
+Configure these settings for all six packages:
 
-| Location                                    | Configuration                                                                                                              |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| GitHub repository Actions variables         | Set `NPM_RELEASE_USER` to the GitHub username authorized to publish. Without it, the workflow only builds                  |
-| GitHub repository Actions secrets           | Set `NPM_TOKEN` with publishing access to the target scope for initial publication or packages without a Trusted Publisher |
-| npm package Settings → Trusted publishing   | Enter the GitHub owner and repository, use `release.yml` as the workflow filename, and permit direct `npm publish`         |
-| GitHub Actions permissions and branch rules | Permit the release metadata job to write to `main` and version tags. PR comment permissions are not required               |
+| Location                                    | Configuration                                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub repository Actions variables         | Set `NPM_RELEASE_USER` to the GitHub username authorized to publish. Without it, the workflow only builds                       |
+| npm package Settings → Trusted publishing   | Configure owner `Justinidlerz`, repository `bloodhound`, workflow `release.yml`, no environment, and allow direct `npm publish` |
+| GitHub Actions permissions and branch rules | Allow publishing jobs to request an OIDC token and the metadata job to write to `main` and create release tags                  |
 
-Publishing uses Node.js 24 and checks for npm 11.5.1 or later. npm uses available OIDC trusted publishing authorization and supports `NPM_TOKEN` for initial publication. The token is injected only into the publishing step, not into build jobs. After initial publication, bind a Trusted Publisher in each package's npm settings. Remove `NPM_TOKEN` after confirming that OIDC publication succeeds. Preparation generates `repository.url` from the GitHub repository. See [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) for setup details.
+Publishing uses Node.js 24 and checks for npm 11.15.0 or later. Authentication uses OIDC without injecting `NPM_TOKEN`. Preparation generates `repository.url` from the GitHub repository. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
-If stable publication succeeds but metadata recording fails, resolve branch or tag permissions, or conflicts from an advancing branch, then resume the `record-release` job. The workflow does not force-push or delete npm versions. PR beta versions include the run ID and attempt number, so reruns do not reuse the same beta version.
+Versions already staged before enabling direct publishing remain pending. A maintainer must approve those versions, or reject them before retrying direct publication of the same version. Changing publisher permissions does not approve pending packages. The workflow does not approve or reject staged versions. See [npm staged publishing](https://docs.npmjs.com/staged-publishing/).
 
-`NPM_TOKEN` must cover core and all five platform packages. When using Trusted Publishers, bind each package to the same `release.yml` workflow.
+## Retry and inspect results
 
-Download build artifacts from the Actions run: `bloodhound-packages` contains six npm archives, the release manifest, and the publishing script. `example-reports-*` contains reports from each platform's examples. Check the job summary for published versions and artifact details.
+The `npm-publish-results-<attempt>` artifact contains `publish-results.json`, including archive integrity and each attempted package's `published`, `already-published`, or `failed` status. Results are saved after each package, including before a failure exits the job. `bloodhound-packages` contains all six archives, their manifest, and the publishing script. `example-reports-*` contains the platform example reports.
+
+After a partial failure, correct the cause and retry with the original archives. Public versions with identical integrity are skipped. Different content, duplicate staged versions, and authorization failures remain errors. Public package versions cannot be overwritten: use the original archives or advance to a fresh version before publishing rebuilt archives.
+
+If publication succeeded but metadata recording failed, rerun only `record-release` after resolving branch permissions or an advancing branch. A full PR rerun produces a different beta version because its version includes the run ID and attempt number.
+
+Rerunning an old Actions run uses that run's workflow and packaged script. Workflow edits take effect in runs created from a commit containing those edits.
+
+## Recover original release archives
+
+Run `Release` manually on `main` with `publish_run_id` set to the original completed main-branch Release push run and `publish_tag` set to its intended npm tag. Only `NPM_RELEASE_USER` can publish these artifacts. Recovery checks the source run, downloads `bloodhound-packages`, applies the current publishing script, and verifies archive integrity. Matching public versions are skipped and missing versions are published and verified. No binaries are rebuilt.
+
+Recovery does not consume current Changesets or update version files from an older source revision. Reconcile the recovered release version before preparing a later release with new artifacts.

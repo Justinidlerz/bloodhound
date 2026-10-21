@@ -20,9 +20,9 @@ This record describes SDK checks performed on macOS arm64 with Node.js 22.23.1 a
 
 The public artifact's partial result includes gaps involving mutable captured aliases, switch / exception control flow, and unknown object operations. Results are saved in `outputs/csstree-rust-report.json` and `outputs/csstree-rust.jsonl`. This run is not a precision, recall, or performance benchmark.
 
-TypeSafe checked public technical facts about JavaScript, native extensions, and HTML tokenization. Internal designs, repository source, and scan reports were not uploaded. Local commands produced the compilation, package loading, and scan results.
+TypeSafe reviewed SDK code, public technical facts, and aggregate verification results. Captured HTML and resource bodies were not sent. Local commands produced the compilation, package loading, and scan results.
 
-The initial SDK checks did not add or modify unit tests or use a browser. Evaluation against a fully labeled dataset has not been performed.
+Automated Rust, SDK, and release-script suites supplement these checks. See [Testing](testing.md) for commands and feature coverage. Evaluation against a fully labeled dataset has not been performed.
 
 # Platform package verification
 
@@ -39,3 +39,64 @@ The following checks cover separate binary packages:
 | Workflow                                            | actionlint passed. The workflow with separate platform packages has not yet run across all CI targets                    |
 
 Installation checks used a temporary local registry and actual package archives. The macOS arm64 binary came from a local build, while the other platforms reused existing CI artifacts. Those platforms were checked for installation selection only, without executing their binaries locally. TypeSafe assisted with checking the packaging approach and the scope of the conclusions. Installation, build, and scan commands produced the actual results.
+
+# Automated test verification
+
+The automated suites passed locally on macOS arm64 with Node.js 22.23.1 and Rust 1.99.0-nightly:
+
+| Suite                                      | Passed | Failed |
+| ------------------------------------------ | -----: | -----: |
+| Rust modules and scan engine               |     86 |      0 |
+| Build and release scripts                  |     48 |      0 |
+| Public Node SDK and local HTTP integration |     21 |      0 |
+| Total                                      |    155 |      0 |
+
+`pnpm test` also passed native compilation and TypeScript checks. Prettier, rustfmt, `git diff --check`, and actionlint passed. Tests now run in the release workflow, but these test additions have not yet run on remote CI.
+
+Production Rust line coverage measured with cargo-llvm-cov 0.9.1 excludes test files and `test_support.rs`. The Rust-only run covered 88.00%. Combining its profiles with SDK tests against an instrumented debug native library covered 3,649 of 3,926 lines (92.94%):
+
+| Module              | Line coverage |
+| ------------------- | ------------: |
+| Scan engine         |        91.27% |
+| JavaScript analysis |        92.98% |
+| Native bindings     |        91.63% |
+| HTML and CSS        |        92.64% |
+| Data model          |        97.65% |
+| Index queries       |        98.03% |
+| Resolution          |        97.86% |
+
+The combined measurement uses the generated loader's `NAPI_RS_NATIVE_LIBRARY_PATH` override to load the instrumented binary and merges the Rust and Node process profiles. It does not include JavaScript script coverage, third-party dependencies, or branch coverage. Remaining lines include error handling and less common input forms. These results do not establish complete coverage of every possible input or application-level precision and recall.
+
+Regression tests exercise stable entry-path pagination across repeated queries and rejection of malformed release repository owners. TypeSafe assisted with reviewing coverage scope and reporting limits. Executed tests and LLVM profiles provide the measured results. See [Testing](testing.md) for suite commands and feature groups.
+
+# Direct release workflow
+
+The release script uses `npm publish`, verifies public registry integrity after each package, and publishes core after all platform packages are available. Retries skip identical published versions. Main-branch releases record version metadata and a release tag after publishing succeeds. OIDC authentication does not require the `NPM_TOKEN` secret.
+
+All 48 build and release-script tests passed, including 27 packaging and publishing cases. Prettier, actionlint, and `git diff --check` passed. Publisher tests mock npm commands and registry visibility. They do not publish packages or approve pending staged versions. Local workflow edits require a new workflow run to validate remote publishing.
+
+# Large report bridge
+
+The native bridge converts report collections separately, including reports embedded in checkpoints. Query outputs use the same serializer as scan results. This removes the aggregate JSON node limit from report APIs while preserving depth and expansion checks on individual input records. Report files use buffered writes followed by flush, sync, and atomic replacement.
+
+All 81 Rust tests and 17 SDK tests passed. The SDK regressions cover reports exceeding one million JSON value nodes, report helpers, large query outputs, both checkpoint entry points, and rejection of cyclic, deeply nested, amplified, or malformed records. Type checking, formatting, and diff checks passed.
+
+A previously failing 42 MiB report passed validation, GlobalIndex construction, exact report round trip, index export, adapters, diffs, and runtime-candidate queries using the local build. Its 47,647 global access records produced 22 static conflict candidates. The original report remains partial because of scan budgets. This is local verification, not evidence of a published fix.
+
+A fresh scan of the original HTML completed the scan-to-index path with default budgets: 58 resources, 50,589 global access records, and 24 static conflict candidates. The approximately 44 MiB report was saved and indexed successfully. The scan returned after 120.852 seconds and retained `partial` status with explicit time and analysis-budget gaps.
+
+# Text input and compact manifests
+
+| Check                                           | Result                                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Raw HTML input without an attachment URL        | Inline code and absolute dependencies scanned; no attachment path used as a document base              |
+| Relative dependencies without a base            | Reported as `missing-base-url`                                                                         |
+| Automatic HTML base and import map discovery    | Passed with absolute bases and supplied document URLs                                                  |
+| JSON stdout examples                            | One JSON document, no implicit file writes                                                             |
+| Report comparison using identical serialization | 38,311,812 bytes full; 635,396 bytes compact, a 98.34% reduction                                       |
+| Preserved results                               | 225 global modifications, 2,487 DOM/CSS findings, 389 dependency edges                                 |
+| Coverage gaps                                   | 15,184 records grouped into 346 entries with counts and example locations                              |
+| Completion status                               | `partial`; the 120-second scan budget was reached                                                      |
+| TypeScript API                                  | Default manifests, explicit full reports, dynamic format options, and full-report-only indexes checked |
+
+The comparison uses full and compact output from the same scan. It measures removed fields and records independently of whitespace. All modifications and DOM/CSS findings retain locations. Read-only access details remain available through the explicit full-report option. Rust module splitting preserves existing analysis regression coverage. These changes are local and have not been published.

@@ -3,7 +3,7 @@ use crate::{
     model::{hash, text},
 };
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 pub struct Index {
     pub report: Value,
     by_target: HashMap<String, Vec<usize>>,
@@ -103,7 +103,7 @@ impl Index {
         let limit = args["limit"].as_u64().unwrap_or(100) as usize;
         let offset = args["offset"].as_u64().unwrap_or(0) as usize;
         let max = args["maxVisits"].as_u64().unwrap_or(10_000) as usize;
-        let starts: HashSet<_> = self
+        let starts: BTreeSet<_> = self
             .by_target
             .get(id)
             .into_iter()
@@ -235,3 +235,7 @@ fn diff(before: &Value, after: &Value) -> Value {
     }
     json!({"added":added,"removed":removed,"changed":changed})
 }
+
+#[cfg(test)]
+#[path = "tests/query.rs"]
+mod tests;

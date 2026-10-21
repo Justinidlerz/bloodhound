@@ -5,8 +5,14 @@ fn url_like(s: &str) -> bool {
     s.starts_with('/') || s.starts_with("./") || s.starts_with("../") || Url::parse(s).is_ok()
 }
 pub fn join(base: &str, s: &str) -> Result<String, String> {
-    Url::parse(base)
-        .and_then(|u| u.join(s))
+    if let Ok(url) = Url::parse(s) {
+        return Ok(url.to_string());
+    }
+    let base = Url::parse(base).map_err(|_| "invalid-resource-url")?;
+    if base.cannot_be_a_base() {
+        return Err("missing-base-url".into());
+    }
+    base.join(s)
         .map(|u| u.to_string())
         .map_err(|_| "invalid-resource-url".into())
 }
@@ -147,3 +153,7 @@ pub fn kind(dependency: &Value, url: &str) -> String {
     }
     .into()
 }
+
+#[cfg(test)]
+#[path = "tests/resolve.rs"]
+mod tests;
