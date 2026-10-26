@@ -1,0 +1,64 @@
+{
+  "name": "@bloodhound-rs/rollup-plugin",
+  "version": "0.1.0",
+  "description": "Rollup, Rolldown, and Vite plugin that scans emitted bundles with @bloodhound-rs/core during generateBundle",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "node --test tests/plugin.test.mjs"
+  },
+  "dependencies": {
+    "@bloodhound-rs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "rolldown": ">=1.0.0",
+    "rollup": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "rolldown": {
+      "optional": true
+    },
+    "rollup": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "rolldown": "1.2.14",
+    "rollup": "^4.0.0",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Justinidlerz/bloodhound.git",
+    "directory": "packages/rollup-plugin"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "rollup-plugin",
+    "rolldown-plugin",
+    "vite-plugin",
+    "static-analysis",
+    "globals"
+  ]
+}

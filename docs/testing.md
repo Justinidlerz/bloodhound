@@ -1,65 +1,20 @@
-# Test the SDK
+# Testing
 
-This guide is for contributors running the Rust, Node.js SDK, and release-script tests. Use Node.js 22+, pnpm 10.20.0, Rust 1.97+, and the platform build tools listed in the README.
+Run `pnpm test` after installing with `pnpm install --frozen-lockfile`. It runs Rust unit/integration tests, build and release script tests, builds the native SDK and bundler plugin, checks TypeScript declarations, then runs SDK and plugin integration tests.
 
-## Run tests
+| Command                      | Coverage                                                                                                                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test:rust`             | Global/local alias distinction, cleanup identity/order, scope, DOM/script/style detection, HTML extraction, import maps, loading, scheduling, UTF-16 locations, reports and JSON boundary |
+| `pnpm test:scripts`          | Native version/platform metadata, clean builds, release preparation, package contents and mocked registry publishing                                                                      |
+| `pnpm build`                 | Native release build, generated loader/declarations, SDK and plugin TypeScript                                                                                                            |
+| `pnpm typecheck`             | SDK usage contracts and structural compatibility with Rollup/Rolldown plugin types                                                                                                        |
+| `pnpm test:sdk`              | Public source forms, offline mappings, recursive/single behavior, errors, source maps, HTTP redirects, AbortSignal lifecycle and concurrent scans                                         |
+| `pnpm test:plugin`           | Real in-memory Rollup/Rolldown builds, hidden maps, HTML inline positions, filtering, manifests and build failures                                                                        |
+| `pnpm format:check`          | JavaScript, TypeScript, documentation and metadata formatting                                                                                                                             |
+| `cargo fmt --all -- --check` | Rust formatting                                                                                                                                                                           |
 
-From the repository root, install dependencies and run the full suite:
+Rust and Node network tests use loopback HTTP servers. Recursive test graphs use in-memory mappings and disable network access. They cover duplicate entries, cycles, finite dynamic-import candidates, separate document import maps, URL-specific import.meta resolution, redirects, resource/depth limits and parse failures. CSS tests assert discovery without detailed rules and distinguish document inline styles from ordinary SSR markup.
 
-```sh
-pnpm install --frozen-lockfile
-pnpm test
-```
+Plugin tests execute both bundlers and compare source-map locations, emitted manifests and diagnostic behavior. Release tests mock npm publishing; no test publishes packages. Current tests are regressions for specified behavior, not a measurement of application-level precision or recall.
 
-The command runs Rust and script tests, builds the native extension, checks TypeScript declarations, and runs SDK tests against the compiled extension. A failed assertion exits with a nonzero status.
-
-Use these commands for individual suites:
-
-| Command                   | Scope                                                                 | Prerequisite                |
-| ------------------------- | --------------------------------------------------------------------- | --------------------------- |
-| `pnpm test:rust`          | Rust module and scanner tests                                         | Rust dependencies installed |
-| `pnpm test:scripts`       | Versioning, platform metadata, schemas, packing, and publishing logic | Node dependencies installed |
-| `pnpm test:sdk`           | Public napi exports and real HTTP behavior                            | `pnpm build`                |
-| `pnpm format:check`       | JavaScript, TypeScript, JSON, YAML, and documentation formatting      | Node dependencies installed |
-| `cargo fmt --all --check` | Rust formatting                                                       | rustfmt installed           |
-
-SDK network tests bind ephemeral ports on `127.0.0.1`. Permit local listening when running in a sandbox. They do not require an external HTTP service or browser.
-
-## Test coverage
-
-The suites cover these feature groups:
-
-| Area                | Test files                                                                 | Cases                                                                                                                                                                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data model          | `native/src/tests/model.rs`                                                | Hash stability, source identity, UTF-16 locations, serialization, default budgets                                                                                                                                                                        |
-| Resolution          | `native/src/tests/resolve.rs`                                              | URL bases, bare specifiers, import-map scopes and prefixes, blocked mappings, map merges                                                                                                                                                                 |
-| HTML and CSS        | `native/src/tests/markup.rs`                                               | Base URLs, import-map timing, script modes, templates, iframes, inline locations, CSS imports, assets, global styles, malformed input                                                                                                                    |
-| JavaScript analysis | `native/src/tests/js.rs`                                                   | Scope and alias tracking, shadowing, global operations, finite evaluation, symbols, destructuring, branches and loops, module summaries, workers, DOM, webpack, Vite, analysis limits                                                                    |
-| Scan engine         | `native/src/tests/engine.rs`                                               | Recursive graphs and cycles, context isolation, loading, access restrictions, budgets, cancellation, source maps, JSONL replay, checkpoint recovery, report validation                                                                                   |
-| Compact output      | `native/src/tests/compact.rs`, `tests/sdk.test.mjs`, `tests/types.test.ts` | Mutation and finding preservation, grouped gap counts, scopes, text input, URL bases, automatic import maps, JSON stdout, full-report selection, and TypeScript inference                                                                                |
-| Index queries       | `native/src/tests/query.rs`                                                | Target and source filters, stable pagination, bounded traversal, conflicts, unbound candidates, report adapters, runtime candidates, version diffs                                                                                                       |
-| Native bindings     | `native/src/tests/bindings.rs`, `tests/sdk.test.mjs`                       | Every public export, input adaptation, errors, default values, real native loading, signal lifecycle, report files                                                                                                                                       |
-| HTTP                | `tests/sdk.test.mjs`                                                       | Redirect authorization, credential isolation, retries, size limits, timeouts, proxy routing, in-flight cancellation                                                                                                                                      |
-| Build and release   | `tests/scripts.test.mjs`, `tests/release.test.mjs`                         | Schema generation, cleanup, version synchronization, Changesets check/beta/latest modes, platform metadata, six-package archives, integrity checks, publishing order and visibility polling, partial failures, public-version retries, registry failures |
-
-Release tests use temporary workspaces. Packing tests create real archives containing fixture bytes, not executable native libraries. Publisher tests replace every npm command with a mock and simulate registry visibility delays, timeouts, and integrity mismatches. They do not publish packages, use npm tokens, or alter repository versions. Native compilation and generated bindings are exercised by the full suite's build and SDK stages.
-
-## Measure Rust coverage
-
-Install `cargo-llvm-cov` and the toolchain's `llvm-tools-preview` component, then run:
-
-```sh
-cargo llvm-cov --lib --locked \
-  --ignore-filename-regex '(tests/|test_support.rs)' \
-  --html
-```
-
-The HTML report is written to `target/llvm-cov/html`. This measurement excludes test source and includes production Rust code. A Rust-only run does not count Node SDK execution, including napi callbacks and HTTP integration cases. Line coverage does not establish branch coverage or precision and recall on real applications.
-
-## CI
-
-The preparation job runs script tests before version preparation. Each of the five native build jobs runs Rust tests, builds the extension, checks declarations, runs SDK tests, and runs the JavaScript and HTML examples. Package assembly and publishing depend on these jobs succeeding. Local results cover the current machine; the other platforms require their CI jobs to run.
-
-# Large report regression coverage
-
-SDK tests construct a valid report exceeding one million JSON value nodes and exercise validation, indexing, report getters, source queries, conflict queries, adapters, diffs, runtime candidates, and both checkpoint entry points. Separate cases reject cyclic records, excessive nesting, shared-object expansion, and malformed collections. Fixtures are generated locally and contain no captured page data.
+Manual examples: `pnpm example`, `pnpm example:html`, `pnpm example:rollup`, and `pnpm example:rolldown`. The first two emit JSON to stdout; bundler examples write into `examples/rollup/dist/`. A live-page scan is useful for performance investigation but is not a reproducible benchmark unless dependency bytes, network state and budgets are fixed.

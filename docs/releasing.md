@@ -4,21 +4,21 @@ This guide covers Changesets versioning and automatic npm publishing through `.g
 
 ## Workflow
 
-| Trigger                                                                                                                                  | Behavior                                                                                                                                              |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PR opened, updated, reopened, or marked ready                                                                                            | Check formatting, run script tests, build five native targets, run Rust and SDK tests, check types, run JS / HTML examples, and assemble six archives |
-| Non-draft PR from the same repository, with both author and triggering actor matching `NPM_RELEASE_USER`, and a changeset version change | Publish a beta version without writing version files back to the PR branch                                                                            |
-| Push to `main` by `NPM_RELEASE_USER`, with a changeset version change                                                                    | Publish a stable version, then commit version metadata, consume Changesets, and create a release tag                                                  |
-| Manual run with an empty `publish_run_id`                                                                                                | Check, build, and pack without publishing                                                                                                             |
-| Manual run with `publish_run_id`                                                                                                         | Recover missing packages from the original release archives                                                                                           |
+| Trigger                                                                                                                                  | Behavior                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR opened, updated, reopened, or marked ready                                                                                            | Check formatting, run script tests, build five native targets, run Rust and SDK tests, check types, run JS / HTML examples, and assemble all public workspace packages |
+| Non-draft PR from the same repository, with both author and triggering actor matching `NPM_RELEASE_USER`, and a changeset version change | Publish a beta version without writing version files back to the PR branch                                                                                             |
+| Push to `main` by `NPM_RELEASE_USER`, with a changeset version change                                                                    | Publish a stable version, then commit version metadata, consume Changesets, and create a release tag                                                                   |
+| Manual run with an empty `publish_run_id`                                                                                                | Check, build, and pack without publishing                                                                                                                              |
+| Manual run with `publish_run_id`                                                                                                         | Recover missing packages from the original release archives                                                                                                            |
 
 Native targets are defined in `.github/native-targets.json`: Linux glibc x64 / arm64, macOS x64 / arm64, and Windows x64. Keep `package.json` → `napi.targets` aligned with this matrix. `pnpm platforms:sync` checks that they match and uses napi-rs to generate `npm/<platform>/package.json`.
 
-Core contains the loader, declarations, schemas, and documentation. Each of the five platform packages contains one binary and restricts installation with `os`, `cpu`, and `libc`. Core uses `workspace:*` optional dependencies in the repository. Packing converts these to exact versions.
+Core contains the loader, declarations, and documentation. Each of the five platform packages contains one binary and restricts installation with `os`, `cpu`, and `libc`. Core uses `workspace:*` optional dependencies in the repository. Packing converts these to exact versions.
 
-Assembly checks that all five binaries exist, core contains no binaries, and each platform package contains exactly one binary. It produces six archives and a release manifest with SHA-512 integrity values.
+Assembly checks that all five binaries exist, core contains no binaries, and each platform package contains exactly one binary. The Rollup plugin is built against the collected SDK and packed separately with no native binary. All public workspace packages are discovered from pnpm metadata, yielding seven archives for the current workspace. The release manifest includes SHA-512 integrity values.
 
-The publisher verifies all archives before contacting npm, then publishes platform packages followed by core using `npm publish`. After each publish, it checks public registry integrity every 15 seconds for up to 10 minutes. It stops on a timeout, mismatched content, or a failed command. Core is published only after all platform versions are verified. No npm approval click is required for new direct releases.
+The publisher verifies all archives before contacting npm, then publishes the versions selected by Changesets in runtime dependency order using `npm publish`: platform packages, core, then the plugin when those packages changed. After each publish, it checks public registry integrity every 15 seconds for up to 10 minutes. It stops on a timeout, mismatched content, or a failed command. Core is published only after all platform versions are verified. No npm approval click is required for new direct releases.
 
 ## Use Changesets
 
@@ -28,20 +28,22 @@ Run this command from the repository root:
 pnpm changeset
 ```
 
-Select a patch, minor, or major release for `@bloodhound-rs/core` and write a description for SDK consumers. All six packages belong to one Changesets fixed group and receive the same version. Include the generated `.changeset/*.md` file in the PR. Documentation-only or example-only changes do not require a changeset. Without a version change, the workflow does not publish packages.
+Select a patch, minor, or major release for the affected packages and describe the change for consumers. Core and its five platform packages form a fixed group. `@bloodhound-rs/rollup-plugin` is versioned independently; a plugin-only changeset also triggers publication. Include the generated `.changeset/*.md` file in the PR. Documentation-only or example-only changes do not require a changeset. Without a version change, the workflow does not publish packages.
 
-| Stage                                 | Version handling                                                                                                       |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| PR                                    | Calculate the next version, append `-beta.<PR-number>.<run-ID>.<attempt>`, and publish with the `beta` tag             |
-| Main branch                           | Update versions and changelogs, consume changeset files, and publish with the `latest` tag                             |
-| Before native builds                  | Synchronize the npm version to `native/Cargo.toml` and `Cargo.lock`. Reports use the compiled Rust version             |
-| After verified main-branch publishing | Commit metadata with `chore: release <version> [skip ci]`, create `v<version>`, and push the commit and tag atomically |
+| Stage                                 | Version handling                                                                                                                                                                               |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR                                    | Calculate the next version, append `-beta.<PR-number>.<run-ID>.<attempt>`, and publish with the `beta` tag                                                                                     |
+| Main branch                           | Update versions and changelogs, consume changeset files, and publish with the `latest` tag                                                                                                     |
+| Before native builds                  | Synchronize the npm version to `native/Cargo.toml` and `Cargo.lock`. Reports use the compiled Rust version                                                                                     |
+| After verified main-branch publishing | Commit metadata with `chore: release <version> [skip ci]`, create `v<version>` for core or `<package>@<version>` for independently versioned packages, and push the commit and tags atomically |
+
+Preparation saves changed package names, versions, tags and metadata paths in `artifacts/release-plan.json`. The release-state archive carries this plan and every workspace manifest/changelog into build, packaging and metadata recording jobs. Beta suffixes apply only to changed packages; workspace dependencies resolve to the corresponding prepared versions. Unchanged package versions are not republished when only the plugin changes.
 
 To preview version changes locally, run `pnpm version:packages`. It modifies the working tree without committing, pushing, or publishing. `.changeset/config.json` keeps `commit` set to `false`.
 
 ## Configure GitHub and npm
 
-Configure these settings for all six packages:
+Configure these settings for every public package, including `@bloodhound-rs/rollup-plugin`:
 
 | Location                                    | Configuration                                                                                                                   |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,7 +57,7 @@ Versions already staged before enabling direct publishing remain pending. A main
 
 ## Retry and inspect results
 
-The `npm-publish-results-<attempt>` artifact contains `publish-results.json`, including archive integrity and each attempted package's `published`, `already-published`, or `failed` status. Results are saved after each package, including before a failure exits the job. `bloodhound-packages` contains all six archives, their manifest, and the publishing script. `example-reports-*` contains the platform example reports.
+The `npm-publish-results-<attempt>` artifact contains `publish-results.json`, including archive integrity and each attempted package's `published`, `already-published`, or `failed` status. Results are saved after each package, including before a failure exits the job. `bloodhound-packages` contains the archives, their release manifest, and the publishing script. `example-reports-*` contains the platform example reports.
 
 After a partial failure, correct the cause and retry with the original archives. Public versions with identical integrity are skipped. Different content, duplicate staged versions, and authorization failures remain errors. Public package versions cannot be overwritten: use the original archives or advance to a fresh version before publishing rebuilt archives.
 

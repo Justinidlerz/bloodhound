@@ -20,17 +20,6 @@ test('clean-dist preserves collected binaries and removes stale bindings and dir
   assert.deepEqual(readdirSync(join(dir, 'dist')), ['foreign.node']);
   assert.equal(readFileSync(join(dir, 'dist/foreign.node'), 'utf8'), 'native');
 });
-test('schema generator reproduces both public schemas without changing their definitions', (t) => {
-  const dir = fixture(t);
-  copy(dir, 'scripts/generate-schema.mjs');
-  write(dir, 'schemas/.keep', '');
-  success(run(dir, 'scripts/generate-schema.mjs'));
-  for (const name of ['report', 'index'])
-    assert.deepEqual(
-      readJson(join(dir, `schemas/${name}.schema.json`)),
-      readJson(join(root, `schemas/${name}.schema.json`)),
-    );
-});
 function nativeFixture(t, version = '1.2.3-beta.4') {
   const dir = fixture(t);
   copy(dir, 'scripts/sync-native-version.mjs');

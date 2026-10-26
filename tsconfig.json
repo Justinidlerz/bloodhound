@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "dist/index.d.ts"]
+  "include": ["src/**/*.ts"]
 }

@@ -1,364 +1,602 @@
-use super::*;
+//! AST walk.
+//!
+//! The visitor drives the rules in source order, maintains the `this`
+//! stack, binds `var`/`const` values, follows IIFE arguments into
+//! parameters, and records module dependencies.
 
-impl<'s, 'a> Analyzer<'s, 'a> {
-    pub(super) fn gap(&mut self, span: Span, reason: &str, cap: &str) {
-        let item =
-            json!({"start":span.start,"end":span.end,"reason":reason,"affectedCapabilities":[cap]});
-        if !self.output.unresolved.contains(&item) {
-            self.output.unresolved.push(item);
+use super::Analyzer;
+use super::values::Value;
+use crate::model::{DependencyKind, ScriptMode, Span};
+use oxc_ast::ast::*;
+use oxc_ast_visit::{Visit, walk};
+use oxc_span::GetSpan;
+use oxc_syntax::scope::ScopeFlags;
+use oxc_syntax::symbol::SymbolId;
+
+fn span_of(s: oxc_span::Span) -> Span {
+    Span::new(s.start, s.end)
+}
+
+fn is_nullish(expr: &Expression<'_>) -> bool {
+    match expr.get_inner_expression() {
+        Expression::NullLiteral(_) => true,
+        Expression::Identifier(id) => id.name == "undefined",
+        _ => false,
+    }
+}
+
+/// Whether `expr` is a null check in the direction a short-circuit guard
+/// needs: for `a || b`, `a` must test *equality* with null/undefined; for
+/// `a && b`, *inequality*. `typeof x === "undefined"` counts as equality.
+fn is_null_guard(expr: &Expression<'_>, equality: bool) -> bool {
+    let Expression::BinaryExpression(b) = expr.get_inner_expression() else {
+        return false;
+    };
+    let operator_matches = if equality {
+        matches!(
+            b.operator,
+            BinaryOperator::Equality | BinaryOperator::StrictEquality
+        )
+    } else {
+        matches!(
+            b.operator,
+            BinaryOperator::Inequality | BinaryOperator::StrictInequality
+        )
+    };
+    if !operator_matches {
+        return false;
+    }
+    if is_nullish(&b.left) || is_nullish(&b.right) {
+        return true;
+    }
+    let typeof_undefined = |a: &Expression<'_>, other: &Expression<'_>| {
+        matches!(a.get_inner_expression(), Expression::UnaryExpression(u) if u.operator == UnaryOperator::Typeof)
+            && matches!(other.get_inner_expression(), Expression::StringLiteral(s) if s.value == "undefined")
+    };
+    typeof_undefined(&b.left, &b.right) || typeof_undefined(&b.right, &b.left)
+}
+
+/// Static type name of an initializer for the `detail` field.
+fn literal_type(e: &Expression<'_>) -> Option<&'static str> {
+    match e.get_inner_expression() {
+        Expression::StringLiteral(_) | Expression::TemplateLiteral(_) => Some("string"),
+        Expression::NumericLiteral(_) => Some("number"),
+        Expression::BooleanLiteral(_) => Some("boolean"),
+        Expression::NullLiteral(_) => Some("null"),
+        Expression::ObjectExpression(_) => Some("object"),
+        Expression::ArrayExpression(_) => Some("array"),
+        Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_) => {
+            Some("function")
+        }
+        Expression::ClassExpression(_) => Some("class"),
+        _ => None,
+    }
+}
+
+impl<'s, 'c> Analyzer<'s, 'c> {
+    /// Binds the parameters of an immediately-invoked function to the
+    /// abstract values of its arguments so UMD/bundler wrappers resolve.
+    fn bind_iife_params(&mut self, params: &FormalParameters<'_>, args: &[Argument<'_>]) {
+        let values: Vec<Value> = args
+            .iter()
+            .map(|a| {
+                a.as_expression()
+                    .map(|e| self.eval(e))
+                    .unwrap_or(Value::Unknown)
+            })
+            .collect();
+        for ((param, value), arg) in params.items.iter().zip(values).zip(args.iter()) {
+            self.bind_pattern(&param.pattern, value);
+            // Keep the argument's reference identity, not only its abstract
+            // value, so removals inside the IIFE pair with registrations
+            // made with the same handler outside it.
+            if let BindingPattern::BindingIdentifier(id) = &param.pattern {
+                if let (Some(symbol), Some(expr)) = (id.symbol_id.get(), arg.as_expression()) {
+                    self.record_alias(symbol, expr);
+                }
+            }
+        }
+    }
+
+    /// Binds a destructuring pattern to an abstract value.
+    fn bind_pattern(&mut self, pattern: &BindingPattern<'_>, value: Value) {
+        match pattern {
+            BindingPattern::BindingIdentifier(id) => {
+                if let Some(symbol) = id.symbol_id.get() {
+                    self.values.insert(symbol, value);
+                }
+            }
+            BindingPattern::ObjectPattern(o) => {
+                for prop in &o.properties {
+                    if let Some(key) = prop.key.static_name() {
+                        let v = self.member(value.clone(), &key);
+                        self.bind_pattern(&prop.value, v);
+                    }
+                }
+            }
+            BindingPattern::ArrayPattern(a) => {
+                for (i, element) in a.elements.iter().enumerate() {
+                    if let Some(element) = element {
+                        let v = value.property(&i.to_string());
+                        self.bind_pattern(element, v);
+                    }
+                }
+            }
+            BindingPattern::AssignmentPattern(a) => self.bind_pattern(&a.left, value),
+        }
+    }
+
+    /// The `this` value inside a non-arrow function. Only the root scope of a
+    /// classic script has a known `this`; `call(window)`-style invocations
+    /// are handled where the IIFE is visited.
+    fn function_this(&self) -> Value {
+        Value::Unknown
+    }
+
+    fn param_symbols(params: &FormalParameters<'_>) -> Vec<Option<(SymbolId, String)>> {
+        params
+            .items
+            .iter()
+            .map(|p| match &p.pattern {
+                BindingPattern::BindingIdentifier(id) => {
+                    id.symbol_id.get().map(|s| (s, id.name.to_string()))
+                }
+                BindingPattern::AssignmentPattern(a) => match &a.left {
+                    BindingPattern::BindingIdentifier(id) => {
+                        id.symbol_id.get().map(|s| (s, id.name.to_string()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether an expression is a function or arrow literal, with params.
+    fn fn_literal_params(expr: &Expression<'_>) -> Option<Vec<Option<(SymbolId, String)>>> {
+        match expr.get_inner_expression() {
+            Expression::FunctionExpression(f) => Some(Self::param_symbols(&f.params)),
+            Expression::ArrowFunctionExpression(f) => Some(Self::param_symbols(&f.params)),
+            _ => None,
+        }
+    }
+
+    /// Tracks reference aliases: `const g = f`, `const h = this.handler`,
+    /// and `const t = this` (the last under `this_aliases`).
+    fn record_alias(&mut self, symbol: SymbolId, init: &Expression<'_>) {
+        match init.get_inner_expression() {
+            Expression::ThisExpression(_) => {
+                self.this_aliases.insert(symbol);
+                self.aliases.remove(&symbol);
+            }
+            _ => {
+                self.this_aliases.remove(&symbol);
+                match self.callback_identity(init) {
+                    Some(identity) => {
+                        self.aliases.insert(symbol, identity);
+                    }
+                    None => {
+                        self.aliases.remove(&symbol);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Records function literals that form a return value (directly, as the
+    /// last operand of a comma sequence, or inside a returned object/array),
+    /// so removals inside them can clean up registrations made by the
+    /// returning function.
+    fn mark_returned(&mut self, expr: &Expression<'_>) {
+        match expr.get_inner_expression() {
+            Expression::FunctionExpression(f) => {
+                self.returned_fns.insert(f.span().start);
+            }
+            Expression::ArrowFunctionExpression(f) => {
+                self.returned_fns.insert(f.span().start);
+            }
+            Expression::SequenceExpression(s) => {
+                if let Some(last) = s.expressions.last() {
+                    self.mark_returned(last);
+                }
+            }
+            Expression::ObjectExpression(o) => {
+                for prop in &o.properties {
+                    if let ObjectPropertyKind::ObjectProperty(p) = prop {
+                        self.mark_returned(&p.value);
+                    }
+                }
+            }
+            Expression::ArrayExpression(a) => {
+                for element in &a.elements {
+                    if let Some(e) = element.as_expression() {
+                        self.mark_returned(e);
+                    }
+                }
+            }
+            Expression::ConditionalExpression(c) => {
+                self.mark_returned(&c.consequent);
+                self.mark_returned(&c.alternate);
+            }
+            Expression::LogicalExpression(l) => {
+                self.mark_returned(&l.left);
+                self.mark_returned(&l.right);
+            }
+            _ => {}
         }
     }
 }
-impl<'s, 'a> Visit<'a> for Analyzer<'s, 'a> {
-    fn visit_expression(&mut self, e: &Expression<'a>) {
-        self.visits += 1;
-        if self.visits > self.options.max_steps {
-            if self.visits == self.options.max_steps + 1 {
-                self.gap(e.span(), "ast-visit-budget", "globals");
-            }
+
+impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
+    fn visit_expression(&mut self, expr: &Expression<'a>) {
+        if !self.step(span_of(expr.span())) {
             return;
         }
-        if self.visits % 128 == 0 {
-            let expired = self.options.deadline_unix_ms > 0
-                && crate::model::now() >= self.options.deadline_unix_ms;
-            let cancelled = !self.options.run_id.is_empty()
-                && crate::cancellation(&self.options.run_id)
-                    .load(std::sync::atomic::Ordering::Relaxed);
-            if expired || cancelled {
-                self.gap(
-                    e.span(),
-                    if cancelled {
-                        "cancelled"
-                    } else {
-                        "analysis-time-budget"
-                    },
-                    "globals",
-                );
-                self.visits = self.options.max_steps + 1;
-                return;
-            }
-        }
-        walk::walk_expression(self, e);
+        walk::walk_expression(self, expr);
     }
 
-    fn visit_variable_declarator(&mut self, v: &VariableDeclarator<'a>) {
-        self.inspect_variable_declarator(v);
-    }
-    fn visit_binding_identifier(&mut self, i: &BindingIdentifier<'a>) {
-        self.inspect_binding_identifier(i);
-    }
-    fn visit_identifier_reference(&mut self, i: &IdentifierReference<'a>) {
-        if self.suppressed.contains(&(i.span.start, i.span.end)) {
+    fn visit_statement(&mut self, stmt: &Statement<'a>) {
+        if !self.step(span_of(stmt.span())) {
             return;
         }
-        let v = if let Some(s) = self.symbol(i) {
-            self.global_binding(s)
-                .map(|t| Value::Targets(vec![t]))
-                .unwrap_or(Value::Unknown)
-        } else {
-            self.root(i.name.as_str())
+        walk::walk_statement(self, stmt);
+    }
+
+    // ----- declarations ---------------------------------------------------
+
+    fn visit_variable_declarator(&mut self, decl: &VariableDeclarator<'a>) {
+        let binding = match &decl.id {
+            BindingPattern::BindingIdentifier(id) => id.symbol_id.get(),
+            _ => None,
         };
-        self.access(v, i.span, "read", "unknown", "semantic-reference");
-    }
-    fn visit_static_member_expression(&mut self, m: &StaticMemberExpression<'a>) {
-        if !self.suppressed.contains(&(m.span.start, m.span.end)) {
-            let b = self.object_target(&m.object);
-            let v = self.prop(b, vec![m.property.name.to_string()], m.span);
-            self.access(v, m.span, "read", "unknown", "member-and-alias-analysis");
-        }
-        self.visit_expression(&m.object);
-    }
-    fn visit_computed_member_expression(&mut self, m: &ComputedMemberExpression<'a>) {
-        if !self.suppressed.contains(&(m.span.start, m.span.end)) {
-            let b = self.object_target(&m.object);
-            let k = self.eval(&m.expression);
-            let v = self.computed(b, k, m.span);
-            self.access(v, m.span, "read", "unknown", "finite-property-evaluation");
-        }
-        self.visit_expression(&m.object);
-        self.visit_expression(&m.expression);
-    }
-    fn visit_assignment_expression(&mut self, a: &AssignmentExpression<'a>) {
-        self.visit_expression(&a.right);
-        let value = self.eval(&a.right);
-        self.write_target(
-            &a.left,
-            if a.operator.as_str() == "=" {
-                "write"
+        if let Some(init) = &decl.init {
+            if let (Some(symbol), Some(params)) = (binding, Self::fn_literal_params(init)) {
+                self.fn_params.insert(symbol, params);
+                self.pending_owner.push(Some(symbol));
+                self.visit_expression(init);
+                self.pending_owner.pop();
             } else {
-                "compound"
-            },
-            value_type(&a.right),
-        );
-        self.visit_assignment_target(&a.left);
-        match &a.left {
-            AssignmentTarget::AssignmentTargetIdentifier(i) => {
-                if let Some(s) = self.symbol(i) {
-                    self.values.insert(
-                        s,
-                        if a.operator.as_str() == "=" {
-                            value
-                        } else {
-                            Value::Unknown
-                        },
-                    );
-                    self.functions.remove(&format!("s{s:?}"));
-                    self.runtime_properties
-                        .retain(|k, _| !k.starts_with(&format!("s{s:?}.")));
-                } else {
-                    self.blocked.insert(i.name.to_string());
-                }
+                self.visit_expression(init);
             }
-            AssignmentTarget::StaticMemberExpression(m) => {
-                if let Some(key) = self.expression_key(&m.object) {
-                    let full = format!("{key}.{}", m.property.name);
-                    self.register_function(full.clone(), &a.right);
-                    if !matches!(value, Value::Unknown | Value::Typed("function")) {
-                        self.runtime_properties.insert(full, value.clone());
-                    }
-                }
-                if let Expression::Identifier(id) = &m.object {
-                    if let Some(s) = self.symbol(id) {
-                        let prop = m.property.name.to_string();
-                        if let Some(Value::Node(tag)) = self.values.get(&s).cloned() {
-                            if (tag == "script"
-                                && ["text", "textContent", "innerHTML"].contains(&prop.as_str()))
-                                || (tag == "iframe" && prop == "srcdoc")
-                            {
-                                let candidates = value.strings();
-                                if candidates.is_empty() {
-                                    self.gap(a.span, "non-finite-inline-code", "dependencies");
-                                } else {
-                                    for content in candidates {
-                                        self.output.dependencies.push(json!({"start":a.span.start,"end":a.span.end,"kind":if tag=="iframe"{"iframe"}else{"script"},"scriptMode":"classic","environment":if tag=="iframe"{"window"}else{"inherit"},"specifiers":[],"content":content,"condition":"node-insertion-not-proven","sourceLocationApproximate":true}));
-                                    }
-                                }
-                            }
-                            if (tag == "script" && prop == "src")
-                                || (tag == "link" && prop == "href")
-                                || (tag == "iframe" && prop == "src")
-                            {
-                                if tag == "script" && value.strings().is_empty() {
-                                    self.deferred_loads.push((
-                                        self.alloc(&a.right),
-                                        a.span,
-                                        self.values.clone(),
-                                    ));
-                                } else {
-                                    self.dep(
-                                        value.clone(),
-                                        a.span,
-                                        if tag == "iframe" {
-                                            "iframe"
-                                        } else if tag == "link" {
-                                            "style"
-                                        } else {
-                                            "script"
-                                        },
-                                        "classic",
-                                        if tag == "iframe" { "window" } else { "inherit" },
-                                    );
-                                }
-                            }
-                        }
-                        let entry = self
-                            .values
-                            .entry(s)
-                            .or_insert_with(|| Value::Object(BTreeMap::new()));
-                        if let Value::Object(map) = entry {
-                            map.insert(prop, value);
-                        }
-                    }
-                }
-                let ts = self.eval(&m.object).targets();
-                for t in ts {
-                    if t.namespace == "builtin-property" {
-                        self.blocked.insert(t.path_segments.join("."));
-                    }
-                }
-            }
-            AssignmentTarget::ComputedMemberExpression(m) => {
-                let keys = self.eval(&m.expression).strings();
-                if let Expression::Identifier(i) = &m.object {
-                    if let Some(id) = self.symbol(i) {
-                        if keys.len() == 1 {
-                            if let Some(Value::Object(map)) = self.values.get_mut(&id) {
-                                map.insert(keys[0].clone(), value);
-                            }
-                        } else {
-                            self.values.remove(&id);
-                        }
-                    }
-                }
-            }
-            _ => {
-                self.gap(
-                    a.left.span(),
-                    "complex-assignment-propagation",
-                    "evaluation",
-                );
-                self.invalidate_mutable();
+            let value = self.eval(init);
+            self.bind_pattern(&decl.id, value);
+            if let Some(symbol) = binding {
+                self.record_alias(symbol, init);
             }
         }
+        if let BindingPattern::BindingIdentifier(id) = &decl.id {
+            self.rule_declaration(id, decl.init.as_ref().and_then(literal_type));
+        }
     }
-    fn visit_update_expression(&mut self, u: &UpdateExpression<'a>) {
-        let v = match &u.argument {
-            SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
-                if let Some(s) = self.symbol(i) {
-                    self.values.remove(&s);
-                    self.global_binding(s)
-                        .map(|t| Value::Targets(vec![t]))
-                        .unwrap_or(Value::Unknown)
-                } else {
-                    Value::Targets(vec![Target::new(
-                        "unbound-reference",
-                        vec![i.name.to_string()],
-                    )])
-                }
+
+    fn visit_return_statement(&mut self, stmt: &ReturnStatement<'a>) {
+        if let Some(argument) = &stmt.argument {
+            self.mark_returned(argument);
+        }
+        walk::walk_return_statement(self, stmt);
+    }
+
+    fn visit_function(&mut self, func: &Function<'a>, flags: ScopeFlags) {
+        let returned = self.returned_fns.contains(&func.span().start);
+        if returned {
+            self.cleanup_blocks.push(self.block);
+        }
+        let owner = func
+            .id
+            .as_ref()
+            .and_then(|id| id.symbol_id.get())
+            .or_else(|| self.pending_owner.last().copied().flatten());
+        if let Some(symbol) = owner {
+            self.fn_params
+                .insert(symbol, Self::param_symbols(&func.params));
+        }
+        if let Some(id) = &func.id {
+            if func.is_declaration() {
+                self.rule_declaration(id, Some("function"));
             }
-            _ => u
-                .argument
-                .as_member_expression()
-                .map(|m| self.member_value(m))
-                .unwrap_or(Value::Unknown),
+        }
+        let this = self.function_this();
+        let values = self.values.clone();
+        let aliases = self.aliases.clone();
+        let this_aliases = self.this_aliases.clone();
+        // Conditionality is intra-procedural: a function defined under a
+        // branch still executes its own body top to bottom when called.
+        let depth = std::mem::replace(&mut self.conditional_depth, 0);
+        self.this_stack.push(this);
+        self.fn_stack.push(owner);
+        walk::walk_function(self, func, flags);
+        self.fn_stack.pop();
+        self.this_stack.pop();
+        self.conditional_depth = depth;
+        self.values = values;
+        self.aliases = aliases;
+        self.this_aliases = this_aliases;
+        if returned {
+            self.cleanup_blocks.pop();
+        }
+    }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        // Classes are block-scoped; they never create window properties.
+        walk::walk_class(self, class);
+    }
+
+    fn visit_arrow_function_expression(&mut self, func: &ArrowFunctionExpression<'a>) {
+        // Arrow functions inherit `this`; no stack change.
+        let returned = self.returned_fns.contains(&func.span.start);
+        if returned {
+            self.cleanup_blocks.push(self.block);
+        }
+        let owner = self.pending_owner.last().copied().flatten();
+        if let Some(symbol) = owner {
+            self.fn_params
+                .insert(symbol, Self::param_symbols(&func.params));
+        }
+        let values = self.values.clone();
+        let aliases = self.aliases.clone();
+        let this_aliases = self.this_aliases.clone();
+        let depth = std::mem::replace(&mut self.conditional_depth, 0);
+        let block = std::mem::replace(&mut self.block, func.span.start + 1);
+        self.fn_stack.push(owner);
+        walk::walk_arrow_function_expression(self, func);
+        self.fn_stack.pop();
+        self.block = block;
+        self.conditional_depth = depth;
+        self.values = values;
+        self.aliases = aliases;
+        self.this_aliases = this_aliases;
+        if returned {
+            self.cleanup_blocks.pop();
+        }
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody<'a>) {
+        let block = std::mem::replace(&mut self.block, body.span.start + 1);
+        let strict = self.strict;
+        self.strict |= body.directives.iter().any(|d| d.directive == "use strict");
+        walk::walk_function_body(self, body);
+        self.strict = strict;
+        self.block = block;
+    }
+
+    fn visit_block_statement(&mut self, block: &BlockStatement<'a>) {
+        let prior = std::mem::replace(&mut self.block, block.span.start + 1);
+        walk::walk_block_statement(self, block);
+        self.block = prior;
+    }
+
+    fn visit_if_statement(&mut self, stmt: &IfStatement<'a>) {
+        self.visit_expression(&stmt.test);
+        let before = self.values.clone();
+        self.conditional_depth += 1;
+        self.visit_statement(&stmt.consequent);
+        let consequent = std::mem::replace(&mut self.values, before);
+        if let Some(alternate) = &stmt.alternate {
+            self.visit_statement(alternate);
+        }
+        for (symbol, value) in consequent {
+            let alternate = self.values.get(&symbol).cloned().unwrap_or(Value::Unknown);
+            self.values
+                .insert(symbol, value.join(alternate, self.options.max_candidates));
+        }
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_conditional_expression(&mut self, expr: &ConditionalExpression<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_conditional_expression(self, expr);
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_logical_expression(&mut self, expr: &LogicalExpression<'a>) {
+        // The left operand always runs. The right operand is business-logic
+        // conditional except for null guards (`document == null || …`,
+        // `x != null && …`), which are the desugared form of `?.` and do
+        // not make the right side a conditional cleanup.
+        self.visit_expression(&expr.left);
+        let guarded = match expr.operator {
+            LogicalOperator::Or => is_null_guard(&expr.left, true),
+            LogicalOperator::And => is_null_guard(&expr.left, false),
+            LogicalOperator::Coalesce => false,
         };
-        self.access(v.clone(), u.span, "read", "unknown", "update");
-        self.access(v, u.span, "write", "number", "update");
-        self.suppressed
-            .insert((u.argument.span().start, u.argument.span().end));
+        if !guarded {
+            self.conditional_depth += 1;
+        }
+        self.visit_expression(&expr.right);
+        if !guarded {
+            self.conditional_depth -= 1;
+        }
+    }
+
+    fn visit_switch_statement(&mut self, stmt: &SwitchStatement<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_switch_statement(self, stmt);
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_while_statement(&mut self, stmt: &WhileStatement<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_while_statement(self, stmt);
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_for_statement(&mut self, stmt: &ForStatement<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_for_statement(self, stmt);
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_for_of_statement(&mut self, stmt: &ForOfStatement<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_for_of_statement(self, stmt);
+        self.conditional_depth -= 1;
+    }
+
+    fn visit_for_in_statement(&mut self, stmt: &ForInStatement<'a>) {
+        self.conditional_depth += 1;
+        walk::walk_for_in_statement(self, stmt);
+        self.conditional_depth -= 1;
+    }
+
+    // ----- effects --------------------------------------------------------
+
+    fn visit_assignment_expression(&mut self, a: &AssignmentExpression<'a>) {
+        let assigned = match &a.left {
+            AssignmentTarget::AssignmentTargetIdentifier(id) => self.symbol_of(id),
+            _ => None,
+        };
+        if let (Some(symbol), Some(params)) = (assigned, Self::fn_literal_params(&a.right)) {
+            self.fn_params.insert(symbol, params);
+            self.pending_owner.push(Some(symbol));
+            self.visit_expression(&a.right);
+            self.pending_owner.pop();
+        } else {
+            self.visit_expression(&a.right);
+        }
+        if a.operator.as_str() == "=" {
+            if let Some(symbol) = assigned {
+                self.record_alias(symbol, &a.right);
+            }
+        }
+        self.rule_assignment(a);
+        self.visit_assignment_target(&a.left);
+    }
+
+    fn visit_update_expression(&mut self, u: &UpdateExpression<'a>) {
+        self.rule_update(u);
         walk::walk_update_expression(self, u);
     }
+
     fn visit_unary_expression(&mut self, u: &UnaryExpression<'a>) {
-        if u.operator.as_str() == "delete" {
-            let v = self.object_target(&u.argument);
-            self.access(v, u.span, "delete", "undefined", "delete-expression");
-            self.suppressed
-                .insert((u.argument.span().start, u.argument.span().end));
+        if u.operator == UnaryOperator::Delete {
+            self.rule_delete(u);
         }
         walk::walk_unary_expression(self, u);
     }
-    fn visit_function(&mut self, f: &Function<'a>, flags: ScopeFlags) {
-        if let (Some(id), Some(body)) = (
-            f.id.as_ref().and_then(|i| i.symbol_id.get()),
-            f.body.as_ref(),
-        ) {
-            self.inspect_preload(id, body, &f.params);
-        }
-        let saved = self.values.clone();
-        if saved.iter().any(|(id, v)| {
-            !self.scoping.symbol_flags(*id).is_const_variable() && matches!(v, Value::Targets(_))
-        }) {
-            self.gap(f.span, "mutable-captured-alias", "globals");
-        }
-        self.invalidate_mutable();
-        self.depth += 1;
-        walk::walk_function(self, f, flags);
-        self.depth -= 1;
-        self.values = saved;
-    }
-    fn visit_arrow_function_expression(&mut self, f: &ArrowFunctionExpression<'a>) {
-        let saved = self.values.clone();
-        self.invalidate_mutable();
-        self.depth += 1;
-        walk::walk_arrow_function_expression(self, f);
-        self.depth -= 1;
-        self.values = saved;
-    }
-    fn visit_if_statement(&mut self, s: &IfStatement<'a>) {
-        self.visit_expression(&s.test);
-        let saved = self.values.clone();
-        self.visit_statement(&s.consequent);
-        let left = self.values.clone();
-        self.values = saved;
-        if let Some(alt) = &s.alternate {
-            self.visit_statement(alt);
-        }
-        let right = self.values.clone();
-        for (id, a) in left {
-            let b = right.get(&id).cloned().unwrap_or(Value::Unknown);
-            let val = self.join(a, b, s.span);
-            self.values.insert(id, val);
-        }
-    }
-    fn visit_conditional_expression(&mut self, e: &ConditionalExpression<'a>) {
-        self.visit_expression(&e.test);
-        let saved = self.values.clone();
-        self.visit_expression(&e.consequent);
-        let left = self.values.clone();
-        self.values = saved;
-        self.visit_expression(&e.alternate);
-        let right = self.values.clone();
-        for (id, a) in left {
-            let b = right.get(&id).cloned().unwrap_or(Value::Unknown);
-            let val = self.join(a, b, e.span);
-            self.values.insert(id, val);
-        }
-    }
-    fn visit_for_statement(&mut self, s: &ForStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_for_statement(self, s);
-        self.invalidate_mutable();
-    }
-    fn visit_for_in_statement(&mut self, s: &ForInStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_for_in_statement(self, s);
-        self.invalidate_mutable();
-    }
-    fn visit_for_of_statement(&mut self, s: &ForOfStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_for_of_statement(self, s);
-        self.invalidate_mutable();
-    }
-    fn visit_while_statement(&mut self, s: &WhileStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_while_statement(self, s);
-        self.invalidate_mutable();
-    }
-    fn visit_do_while_statement(&mut self, s: &DoWhileStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_do_while_statement(self, s);
-        self.invalidate_mutable();
-    }
-    fn visit_switch_statement(&mut self, s: &SwitchStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_switch_statement(self, s);
-        self.invalidate_mutable();
-        self.gap(s.span, "switch-flow-not-propagated", "evaluation");
-    }
-    fn visit_try_statement(&mut self, s: &TryStatement<'a>) {
-        self.invalidate_mutable();
-        walk::walk_try_statement(self, s);
-        self.invalidate_mutable();
-        self.gap(s.span, "exception-flow-not-propagated", "evaluation");
-    }
-    fn visit_with_statement(&mut self, s: &WithStatement<'a>) {
-        self.gap(s.span, "with-dynamic-scope", "globals");
-    }
-    fn visit_import_declaration(&mut self, i: &ImportDeclaration<'a>) {
-        self.inspect_import_declaration(i);
-    }
-    fn visit_export_named_declaration(&mut self, e: &ExportNamedDeclaration<'a>) {
-        self.inspect_export_named_declaration(e);
-    }
-    fn visit_export_from_declaration(&mut self, e: &ExportFromDeclaration<'a>) {
-        self.inspect_export_from_declaration(e);
-    }
-    fn visit_export_declaration(&mut self, e: &ExportDeclaration<'a>) {
-        self.inspect_export_declaration(e);
-    }
-    fn visit_export_default_declaration(&mut self, e: &ExportDefaultDeclaration<'a>) {
-        self.inspect_export_default_declaration(e);
-    }
-    fn visit_export_all_declaration(&mut self, e: &ExportAllDeclaration<'a>) {
-        self.inspect_export_all_declaration(e);
-    }
-    fn visit_import_expression(&mut self, i: &ImportExpression<'a>) {
-        self.inspect_import_expression(i);
-    }
-    fn visit_new_expression(&mut self, n: &NewExpression<'a>) {
-        self.inspect_new_expression(n);
-    }
+
     fn visit_call_expression(&mut self, c: &CallExpression<'a>) {
-        self.inspect_call_expression(c);
+        // IIFE: `(function (root, factory) { … })(window, …)` and the
+        // `.call(this)` form used by CoffeeScript/TypeScript output.
+        let callee = c.callee.get_inner_expression();
+        match callee {
+            Expression::FunctionExpression(f) => {
+                for arg in &c.arguments {
+                    self.visit_argument(arg);
+                }
+                self.bind_iife_params(&f.params, &c.arguments);
+                // A plain IIFE call has `this === undefined` in strict mode
+                // and `window` in sloppy mode.
+                let strict = self.strict
+                    || f.body
+                        .as_ref()
+                        .is_some_and(|b| b.directives.iter().any(|d| d.directive == "use strict"));
+                let this = if strict {
+                    Value::Undefined
+                } else {
+                    self.this_stack[0].clone()
+                };
+                self.this_stack.push(this);
+                if let Some(body) = &f.body {
+                    self.visit_function_body(body);
+                }
+                self.this_stack.pop();
+                return;
+            }
+            Expression::ArrowFunctionExpression(f) => {
+                for arg in &c.arguments {
+                    self.visit_argument(arg);
+                }
+                self.bind_iife_params(&f.params, &c.arguments);
+                match &f.body {
+                    ArrowFunctionBody::FunctionBody(body) => self.visit_function_body(body),
+                    other => {
+                        if let Some(e) = other.as_expression() {
+                            self.visit_expression(e);
+                        }
+                    }
+                }
+                return;
+            }
+            Expression::StaticMemberExpression(m)
+                if matches!(m.property.name.as_str(), "call" | "apply") =>
+            {
+                if let Expression::FunctionExpression(f) = m.object.get_inner_expression() {
+                    let this = c
+                        .arguments
+                        .first()
+                        .and_then(|a| a.as_expression())
+                        .map(|e| self.eval(e))
+                        .unwrap_or(Value::Unknown);
+                    for arg in &c.arguments {
+                        self.visit_argument(arg);
+                    }
+                    if m.property.name == "call" {
+                        self.bind_iife_params(&f.params, &c.arguments[1.min(c.arguments.len())..]);
+                    }
+                    self.this_stack.push(this);
+                    if let Some(body) = &f.body {
+                        self.visit_function_body(body);
+                    }
+                    self.this_stack.pop();
+                    return;
+                }
+            }
+            _ => {}
+        }
+        self.rule_call(c);
+        walk::walk_call_expression(self, c);
+    }
+
+    fn visit_new_expression(&mut self, n: &NewExpression<'a>) {
+        self.rule_new(n);
+        walk::walk_new_expression(self, n);
+    }
+
+    fn visit_with_statement(&mut self, w: &WithStatement<'a>) {
+        self.gap("with-statement", span_of(w.span), None);
+        walk::walk_with_statement(self, w);
+    }
+
+    // ----- modules --------------------------------------------------------
+
+    fn visit_import_declaration(&mut self, i: &ImportDeclaration<'a>) {
+        let value = Value::Strings(vec![i.source.value.to_string()]);
+        self.dependency(
+            DependencyKind::Import,
+            span_of(i.span),
+            &value,
+            Some(ScriptMode::Module),
+        );
+    }
+
+    fn visit_export_from_declaration(&mut self, e: &ExportFromDeclaration<'a>) {
+        let value = Value::Strings(vec![e.source.value.to_string()]);
+        self.dependency(
+            DependencyKind::Import,
+            span_of(e.span),
+            &value,
+            Some(ScriptMode::Module),
+        );
+    }
+
+    fn visit_export_all_declaration(&mut self, e: &ExportAllDeclaration<'a>) {
+        let value = Value::Strings(vec![e.source.value.to_string()]);
+        self.dependency(
+            DependencyKind::Import,
+            span_of(e.span),
+            &value,
+            Some(ScriptMode::Module),
+        );
+    }
+
+    fn visit_import_expression(&mut self, i: &ImportExpression<'a>) {
+        let value = self.eval(&i.source);
+        self.dependency(
+            DependencyKind::DynamicImport,
+            span_of(i.span),
+            &value,
+            Some(ScriptMode::Module),
+        );
+        walk::walk_import_expression(self, i);
     }
 }

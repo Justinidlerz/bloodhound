@@ -16,11 +16,10 @@ function packageFixture(t) {
   write(
     dir,
     'dist/index.js',
-    `export function defaults(){return {versions:{scanner:${JSON.stringify(pkg.version)}}}}`,
+    `export function version(){return {scanner:${JSON.stringify(pkg.version)}}}`,
   );
-  for (const file of ['dist/index.d.ts', 'dist/types.d.ts']) write(dir, file, 'export {};\n');
-  for (const file of ['schemas/report.schema.json', 'schemas/index.schema.json'])
-    write(dir, file, {});
+  for (const file of ['dist/index.d.ts', 'dist/native.js', 'dist/native.d.ts', 'dist/types.d.ts'])
+    write(dir, file, 'export {};\n');
   for (const { platform } of readJson(join(dir, '.github/native-targets.json')))
     write(dir, `dist/${pkg.napi.binaryName}.${platform}.node`, `binary fixture for ${platform}`);
   return dir;
@@ -64,8 +63,7 @@ for (const [name, modify, pattern] of [
   ],
   [
     'native version mismatch',
-    (dir) =>
-      write(dir, 'dist/index.js', 'export const defaults=()=>({versions:{scanner:"0.0.0-wrong"}})'),
+    (dir) => write(dir, 'dist/index.js', 'export const version=()=>({scanner:"0.0.0-wrong"})'),
     /Native and npm versions differ/,
   ],
   [
@@ -202,13 +200,13 @@ for (const [name, modify, pattern] of [
     /Invalid release manifest/,
   ],
   [
-    'missing platform packages',
+    'missing release packages',
     (f) =>
       write(f.dir, 'scripts/release-manifest.json', {
         registry: 'https://registry.invalid/',
         packages: [],
       }),
-    /Missing platform packages/,
+    /Missing release packages/,
   ],
 ])
   test(`publishing rejects ${name} before any npm command`, (t) => {

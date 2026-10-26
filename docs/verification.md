@@ -1,4 +1,16 @@
-# Local verification
+# Manifest v2 verification
+
+The refactored scanner was checked locally on macOS arm64, Node.js 22.23.1 and Rust 1.99.0-nightly with Oxc 0.154.0. Native/TypeScript/plugin builds and public type checks passed. The current suites passed 33 Rust tests, 47 build/release script tests, 11 Node SDK tests and 11 Rollup/Rolldown integration tests. These counts supersede the historical test and coverage measurements below for this implementation. Rust line coverage has not been remeasured.
+
+The current regressions cover local-slot/global-alias distinctions, cleanup identity and execution order, CSS discovery only, UTF-16 positions, distinct import-map contexts, all finite import candidates, URL-dependent analysis, resource budgets, redirects, parse failures, offline source maps, AbortSignal listener cleanup and native concurrent calls. Unsupported Worker environments and selected HTML contexts remain explicit gaps.
+
+Earlier live-page comparisons used a 35,351-byte sanitized and shortened HTML sample. Network resources and reachable graphs differed between runs. The old engine reached its 180-second budget; early v2 runs returned in roughly 6–14 seconds, still with partial coverage. These observations do not establish a controlled speedup, precision or recall. No finding's severity alone proves harmful runtime behavior.
+
+The final sample run with `maxResources: 200`, `timeoutMs: 45000` and `resourceTimeoutMs: 10000` returned in 25.7 seconds: 200 sources, 29,190,193 bytes and 947 candidate findings (110 error-level and 837 warning-level). It remained partial with 275 unmapped module references, 145 resource-budget exclusions, and 164 counted analysis gaps. Seventeen CSS edges were listed without analysis. The single-mode scan took 8 ms, listed 34 dependencies and zero findings, and remained partial because of five foreign-HTML coverage gaps. These live-network counts are observations, not a stable benchmark.
+
+The sections below are historical records for the previous implementation. APIs, test totals, coverage percentages and platform artifacts described there do not validate Manifest v2.
+
+# Historical local verification
 
 This record describes SDK checks performed on macOS arm64 with Node.js 22.23.1 and Rust 1.99.0-nightly. Oxc components are pinned to 0.154.0, with a minimum Rust version of 1.97.
 

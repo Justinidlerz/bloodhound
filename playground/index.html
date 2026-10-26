@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Bloodhound · Manifest Playground</title>
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="#" class="brand" data-action="home" aria-label="Bloodhound Playground home"
+        ><span class="brand-symbol" aria-hidden="true"
+          ><svg viewBox="0 0 32 32" fill="none">
+            <path d="M8 8h10a7 7 0 0 1 0 14H8V8Z" stroke="currentColor" stroke-width="3" />
+            <path d="M8 16h12M13 5v22" stroke="currentColor" stroke-width="3" /></svg></span
+        ><span>bloodhound<span class="brand-caption">MANIFEST PLAYGROUND</span></span></a
+      >
+      <div class="topbar-file" id="filename" title="No manifest loaded">No manifest loaded</div>
+      <div class="topbar-actions">
+        <span class="local-indicator"><i></i> Local workspace</span
+        ><button class="button secondary" data-action="upload">↑ <span>Open manifest</span></button
+        ><button
+          class="icon-button"
+          id="clear-button"
+          data-action="clear"
+          aria-label="Clear loaded manifest"
+          title="Clear loaded manifest"
+          hidden
+        >
+          ×
+        </button>
+      </div>
+    </header>
+    <input id="file-input" type="file" accept=".json,application/json" hidden />
+    <div class="message" id="message" role="alert" hidden></div>
+    <main>
+      <section class="welcome" id="welcome" aria-labelledby="welcome-title">
+        <div class="welcome-copy">
+          <span class="eyebrow accent">FROM SIGNAL TO SOURCE</span>
+          <h1 id="welcome-title">
+            See the whole picture.<br /><span>Follow every reference.</span>
+          </h1>
+          <p>
+            Explore your scan as connected files, findings and dependencies. Start with a manifest,
+            then follow the evidence.
+          </p>
+        </div>
+        <button class="dropzone" id="dropzone" data-action="upload">
+          <span class="upload-symbol" aria-hidden="true"
+            ><svg viewBox="0 0 40 40" fill="none">
+              <path
+                d="M20 26V9m-6 6 6-6 6 6M9 25v7h22v-7"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              /></svg></span
+          ><strong>Drop your manifest here</strong><span>or click to choose a JSON file</span
+          ><small>Manifest v2 · processed locally · up to 64 MiB</small>
+        </button>
+        <div class="welcome-features">
+          <div>
+            <span class="feature-number">01</span>
+            <h2>Find the source</h2>
+            <p>Jump from any finding to its file, snippet and exact location.</p>
+          </div>
+          <div>
+            <span class="feature-number">02</span>
+            <h2>Follow the graph</h2>
+            <p>Browse entry chains, shared dependencies and referring files.</p>
+          </div>
+          <div>
+            <span class="feature-number">03</span>
+            <h2>Keep the context</h2>
+            <p>Separate recorded effects from unresolved references and coverage gaps.</p>
+          </div>
+        </div>
+        <p class="welcome-footer">
+          Your JSON stays in this browser session. No account, upload service or source execution.
+        </p>
+      </section>
+      <section id="workspace" class="workspace" hidden aria-label="Manifest explorer">
+        <div class="workspace-heading">
+          <div>
+            <span class="eyebrow">WORKSPACE / EXPLORER</span>
+            <h1>Manifest explorer <span id="scan-status"></span></h1>
+          </div>
+          <p id="manifest-meta"></p>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="explorer" id="explorer">
+          <aside class="sidebar" aria-label="Record groups">
+            <div class="sidebar-title">
+              <h2>Browse by</h2>
+              <span id="group-total"></span>
+            </div>
+            <div class="group-modes" role="group" aria-label="Grouping mode">
+              <button data-action="grouping" data-mode="type" aria-pressed="true">Type</button
+              ><button data-action="grouping" data-mode="source" aria-pressed="false">File</button
+              ><button data-action="grouping" data-mode="folder" aria-pressed="false">Folder</button
+              ><button data-action="grouping" data-mode="entry" aria-pressed="false">Entry</button>
+            </div>
+            <label class="sr-only" for="group-search">Search groups</label
+            ><input
+              class="group-search"
+              id="group-search"
+              type="search"
+              placeholder="Filter groups…"
+            /><label class="scope-toggle" id="scope-control" hidden
+              ><input type="checkbox" id="include-dependencies" /> Include dependencies</label
+            >
+            <p class="aside-hint" id="group-hint">Group records by their reported type.</p>
+            <nav class="group-list" id="group-list" aria-label="Groups"></nav>
+            <div class="sidebar-footer">
+              <span class="status-dot"></span> Manifest v2 <span>Read-only explorer</span>
+            </div>
+          </aside>
+          <div
+            class="splitter"
+            data-splitter="sidebar"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize browse panel. Arrow keys adjust, double-click resets."
+            tabindex="0"
+          ></div>
+          <section class="records-panel" aria-label="Records">
+            <div class="record-toolbar">
+              <nav class="tabs" aria-label="Record type">
+                <button data-action="view" data-view="findings" aria-pressed="true">
+                  Findings <span id="count-findings"></span></button
+                ><button data-action="view" data-view="sources" aria-pressed="false">
+                  Files <span id="count-sources"></span></button
+                ><button data-action="view" data-view="dependencies" aria-pressed="false">
+                  Dependencies <span id="count-dependencies"></span></button
+                ><button data-action="view" data-view="gaps" aria-pressed="false">
+                  Coverage <span id="count-gaps"></span>
+                </button>
+              </nav>
+              <div class="search-row">
+                <label class="search-box"
+                  ><span aria-hidden="true">⌕</span><span class="sr-only">Search records</span
+                  ><input
+                    id="search"
+                    type="search"
+                    placeholder="Search target, file, snippet or source ID…" /></label
+                ><button
+                  class="text-link"
+                  data-action="reset-filters"
+                  title="Reset search, filters and grouping"
+                >
+                  Reset
+                </button>
+              </div>
+              <div class="filter-row">
+                <label
+                  ><span id="status-label">Severity</span
+                  ><select id="status-filter">
+                    <option value="">All severities</option>
+                  </select></label
+                ><label id="confidence-control"
+                  >Confidence<select id="confidence-filter">
+                    <option value="">All</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                  </select></label
+                ><span class="result-count" id="result-count" aria-live="polite"></span>
+              </div>
+              <div class="active-scope" id="active-scope" hidden></div>
+            </div>
+            <div id="record-list" class="record-list" aria-label="Matching records"></div>
+            <footer class="pagination">
+              <span id="page-label"></span>
+              <div>
+                <label class="sr-only" for="page-size">Records per page</label
+                ><select id="page-size">
+                  <option value="25">25 / page</option>
+                  <option value="50" selected>50 / page</option>
+                  <option value="100">100 / page</option></select
+                ><button
+                  class="icon-button"
+                  id="previous-page"
+                  data-action="previous-page"
+                  aria-label="Previous page"
+                >
+                  ←</button
+                ><button
+                  class="icon-button"
+                  id="next-page"
+                  data-action="next-page"
+                  aria-label="Next page"
+                >
+                  →
+                </button>
+              </div>
+            </footer>
+          </section>
+          <div
+            class="splitter"
+            data-splitter="inspector"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize detail panel. Arrow keys adjust, double-click resets."
+            tabindex="0"
+          ></div>
+          <aside class="inspector" id="inspector" aria-label="Record details"></aside>
+        </div>
+      </section>
+    </main>
+    <div class="drop-overlay" id="drop-overlay" hidden>
+      <strong>Drop to open manifest</strong><span>Your current view will be replaced.</span>
+    </div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <div class="loading-overlay" id="loading" hidden role="status">
+      <span class="spinner"></span><strong>Reading your manifest…</strong
+      ><span>Building a local view of files and references.</span>
+    </div>
+  </body>
+</html>

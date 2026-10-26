@@ -12,7 +12,7 @@ const { registry, packages } = JSON.parse(
 const tag = process.env.NPM_TAG;
 const dryRun = process.argv.includes('--dry-run');
 if (!dryRun && !tag) throw new Error('NPM_TAG is required');
-if (!Array.isArray(packages) || packages.length < 2) throw new Error('Missing platform packages');
+if (!Array.isArray(packages) || packages.length === 0) throw new Error('Missing release packages');
 const names = new Set();
 for (const entry of packages) {
   if (

@@ -1,283 +1,258 @@
-import type { Manifest } from './manifest.js';
-export type * from './manifest.js';
+/**
+ * Public types of `@bloodhound-rs/core`.
+ *
+ * These mirror the Rust data model in `native/src/model.rs`. The Rust side is
+ * the source of truth; keep field names and enum values in sync.
+ */
 
-export type ResourceKind = 'js' | 'html' | 'css' | 'asset';
-export type ScriptMode = 'classic' | 'module' | 'unknown';
-export type Environment = 'window' | 'worker' | 'unknown';
-export type ScanStatus = 'completed' | 'partial' | 'failed';
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+
+/** Where a resource's bytes come from. */
 export type Source =
   | { type: 'file'; path: string }
   | { type: 'url'; url: string }
-  | { type: 'content'; content: string; resourceUrl?: string };
+  | {
+      type: 'content';
+      content: string;
+      /** Logical URL used to resolve relative dependencies and to label the resource. */
+      resourceUrl?: string;
+    };
+
+export type ResourceKind = 'js' | 'html' | 'css';
+
+/**
+ * How a JavaScript resource executes. Top-level `var`/`function` in a classic
+ * script become `window` properties; in a module they stay module-local.
+ */
+export type ScriptMode = 'classic' | 'module';
+
+export type DependencyMode = 'single' | 'recursive';
+
+export interface ScanEntry {
+  kind: ResourceKind;
+  source: Source;
+  /** Overrides the logical URL of the source. */
+  resourceUrl?: string;
+  /** Script mode for JS entries. Defaults to `ScanOptions.scriptMode`. */
+  scriptMode?: ScriptMode;
+}
+
+export interface Budgets {
+  /** Maximum in-flight load-and-analysis jobs. Default 8, at most 256. */
+  concurrency: number;
+  /** Worker count, capped by concurrency. Default: CPU count, at most 256. */
+  analysisConcurrency: number;
+  /** Wall clock limit for the whole scan. Default 120 000. */
+  timeoutMs: number;
+  /** Per-request network timeout. Default 30 000. */
+  resourceTimeoutMs: number;
+  /** Maximum resources loaded. Default 500. */
+  maxResources: number;
+  /** Maximum size of one resource. Default 16 MiB. */
+  maxResourceBytes: number;
+  /** Maximum total bytes loaded. Default 256 MiB. */
+  maxBytes: number;
+  /** Maximum dependency depth from an entry. Default 16. */
+  maxDepth: number;
+  /** Maximum AST nodes visited per JavaScript resource. Default 2 000 000. */
+  maxSteps: number;
+  /** Maximum string candidates tracked per value. Default 32. */
+  maxCandidates: number;
+  /** HTTP redirects followed per request. Default 5. */
+  maxRedirects: number;
+  /** HTTP retries on transport failure. Default 1. */
+  retries: number;
+}
+
+export interface Access {
+  /** Allowed URL schemes with trailing colon, e.g. `['https:']`. Default: file, http, https. */
+  protocols?: string[];
+  /** Allowed `host[:port]` values for network requests. */
+  hosts?: string[];
+  /** Directories that `file:` URLs must live inside. */
+  fileRoots?: string[];
+}
+
 export interface ImportMap {
   imports?: Record<string, string | null>;
   scopes?: Record<string, Record<string, string | null>>;
 }
-export interface Context {
-  scriptMode: ScriptMode;
-  executionEnvironment: Environment;
+
+export interface ScanOptions {
+  /** Script mode for JS entries and for scripts whose mode is unknown. Default `classic`. */
+  scriptMode?: ScriptMode;
+  /** `single` analyzes only the entries; `recursive` follows dependencies. Default `recursive`. */
+  dependencyMode?: DependencyMode;
+  /** Logical URL for a string or content input (used by `scanHtml`/`scanJs`). */
+  resourceUrl?: string;
+  /** Document base when a resource has no usable URL of its own. */
   baseUrl?: string;
+  /** Import map applied to standalone JS entries. HTML entries read their own. */
   importMap?: ImportMap;
-  importMapBaseUrl?: string;
-  scopeKey: string;
-  publicPath?: string;
-  versions: Record<string, string>;
+  budgets?: Partial<Budgets>;
+  access?: Access;
+  /**
+   * Regex source strings (Rust regex syntax: no lookaround or backreferences) matched against
+   * the resolved logical URL of recursively discovered dependencies, e.g. `'/vendor/'` or
+   * `'\\.min\\.js($|\\?)'`. Matching dependencies are not loaded or analyzed and appear in
+   * `dependencies` as `not-followed` with `reason: 'excluded'`. Inline scripts are not matched.
+   * A matching entry, or an invalid pattern, rejects the scan (throws).
+   */
+  excludeUrls?: string[];
+  /** Substitute sources for resolved URLs (offline scanning of bundler output). */
+  resourceMappings?: Record<string, Source>;
+  /** Extra request headers keyed by `host[:port]`. */
+  requestHeaders?: Record<string, Record<string, string>>;
+  proxy?: string;
+  /** Decode `sourceMappingURL` comments and attach original locations. */
+  sourceMaps?: boolean;
+  /** Cancels a running scan. The result is a manifest with `status: 'cancelled'`. */
+  signal?: AbortSignal;
 }
-export interface Budgets {
-  concurrency: number;
-  analysisConcurrency: number;
-  timeoutMs: number;
-  resourceTimeoutMs: number;
-  maxResources: number;
-  maxBytes: number;
-  maxResourceBytes: number;
-  maxBufferedBytes: number;
-  maxRecords: number;
-  maxDepth: number;
-  maxSteps: number;
-  maxCandidates: number;
-  maxSummaryPasses: number;
-  maxRedirects: number;
-  retries: number;
-}
+
+// ---------------------------------------------------------------------------
+// Manifest
+// ---------------------------------------------------------------------------
+
+/**
+ * Pollution categories reported by the scanner.
+ *
+ * | rule                   | meaning                                                             |
+ * |------------------------|---------------------------------------------------------------------|
+ * | `global-write`         | `window.x = …`, top-level `var`/`function` in classic scripts       |
+ * | `document-write`       | `document.body.className = …`, `document.body.setAttribute(…)`      |
+ * | `builtin-mutation`     | `Array.prototype.x = …`, `Promise.allSettled = …`                   |
+ * | `host-api-override`    | `window.fetch = …`, `XMLHttpRequest.prototype.open = …`             |
+ * | `dom-insertion`        | `document.body.appendChild(…)`, `document.write(…)`                 |
+ * | `style-injection`      | `<style>`/`<link>` inserted by script without removal               |
+ * | `document-style-write` | `document.body.style.x = …`, `documentElement.style.setProperty(…)` |
+ * | `global-listener`      | `window.addEventListener(…)` without `removeEventListener`          |
+ * | `html-global-style`    | `style=` attribute on `<html>`/`<body>`                             |
+ */
+export type Rule =
+  | 'global-write'
+  | 'document-write'
+  | 'builtin-mutation'
+  | 'host-api-override'
+  | 'dom-insertion'
+  | 'style-injection'
+  | 'document-style-write'
+  | 'global-listener'
+  | 'html-global-style';
+
+export type Severity = 'info' | 'warning' | 'error';
+
+/**
+ * `high`: the receiver is provably the global object, `document`, or a builtin.
+ * `medium`: the receiver was tracked through a reassignable alias or a branch.
+ */
+export type Confidence = 'high' | 'medium';
+
+export type ScanStatus = 'completed' | 'partial' | 'failed' | 'cancelled';
+export type SourceStatus = 'completed' | 'partial' | 'failed';
+export type DependencyStatus = 'resolved' | 'not-followed' | 'unresolved';
+
+export type DependencyKind =
+  | 'script'
+  | 'inline-script'
+  | 'style'
+  | 'module-preload'
+  | 'iframe'
+  | 'import'
+  | 'dynamic-import'
+  | 'worker'
+  | 'dynamic-script'
+  | 'dynamic-style';
+
+/** Lines are 1-based; columns are 0-based UTF-16 code units. */
 export interface Location {
-  start: number;
-  end: number;
   line: number;
   column: number;
   endLine: number;
   endColumn: number;
-  offsetEncoding: 'utf16';
+  /** Original position from a source map when `sourceMaps` was enabled. */
   original?: { source: string; line: number; column: number; name?: string };
-  container?: {
-    resourceUrl: string;
-    offset: number;
-    line: number;
-    column: number;
-    approximate?: boolean;
-  };
 }
-export interface Resource {
-  resourceId: string;
-  requestedUrl: string;
-  finalUrl: string;
-  contentHash: string;
+
+export interface ManifestSource {
+  /** Manifest-local id such as `s1`. */
+  id: string;
   kind: ResourceKind;
+  /** Logical URL. Absent for anonymous inline content. */
+  url?: string;
+  /** Present for inline scripts extracted from an HTML parent. */
+  inline?: { parent: string; line: number; column: number };
+  scriptMode?: ScriptMode;
+  status: SourceStatus;
   bytes: number;
-  scmId?: string;
-  inline?: { parentUrl: string; offset: number; approximate?: boolean };
+  contentHash: string;
+  /** Ids of the sources that referenced this one. Empty for entries. */
+  referrers: string[];
+  /** Shortest chain of source ids from an entry to this source, inclusive. */
+  chain: string[];
 }
-export interface AnalysisInstance {
-  analysisId: string;
-  resourceId: string;
-  contextHash: string;
-  context: Context;
-  scanStatus: ScanStatus;
-  exports: Record<string, unknown>;
-  sourceMapStatus: 'absent' | 'mapped' | 'unavailable';
-}
-export interface Reference {
-  referenceId: string;
-  fromAnalysisId: string;
-  toAnalysisIds: string[];
-  kind: string;
-  specifier?: string;
-  resolvedUrl?: string;
-  resolution: 'resolved' | 'candidate' | 'unresolved' | 'not-followed';
-  location: Location;
-  condition?: string;
-  attributes?: Record<string, string>;
-  reason?: string;
-}
-export interface Target {
-  targetId: string;
-  scopeKey: string;
-  namespace: string;
-  pathSegments: string[];
-  keyKind: string;
-}
-export interface GlobalAccess {
-  accessId: string;
-  analysisId: string;
-  targetRefs: string[];
+
+export interface ManifestFinding {
+  /** Source id containing the pollution. */
+  source: string;
+  rule: Rule;
+  severity: Severity;
+  /** Dotted path of the polluted target, e.g. `window.sharedConfig`. */
+  target: string;
+  /** `write` | `update` | `define` | `delete` | `declare` | `insert` | `listen` | `style`. */
   operation: string;
-  valueType: string;
+  confidence: Confidence;
   location: Location;
-  evidence: string[];
-  fingerprint: string;
-}
-export interface Finding {
-  findingId: string;
-  ruleId: string;
-  kind: 'global' | 'dom' | 'css';
-  analysisId: string;
-  accessRefs: string[];
-  location: Location;
-  details: Record<string, unknown>;
-  fingerprint: string;
-}
-export interface Unresolved {
-  analysisId?: string;
-  referenceId?: string;
-  location?: Location;
-  reason: string;
-  affectedCapabilities: string[];
+  /** Trimmed excerpt of the offending expression. */
+  snippet: string;
   detail?: string;
 }
-export interface PendingResource {
-  kind: ResourceKind;
-  source: Source;
-  resourceUrl: string;
-  context: Context;
-  depth: number;
-  incoming: string[];
-  inline?: { parentUrl: string; offset: number; parentContent: string };
+
+export interface ManifestDependency {
+  from: string;
+  /** Set when the dependency was resolved and analyzed. */
+  to?: string;
+  kind: DependencyKind;
+  specifier?: string;
+  url?: string;
+  status: DependencyStatus;
+  reason?: string;
+  location: Location;
 }
-export interface Checkpoint {
-  checkpointVersion: 1;
-  configHash: string;
-  entries: ScanEntry[];
-  pending: PendingResource[];
-  report: Report;
-  options?: Pick<ScanOptions, 'access' | 'resourceMappings' | 'sourceMaps'>;
+
+export interface ManifestGap {
+  source?: string;
+  reason: string;
+  count: number;
+  detail?: string;
+  location?: Location;
 }
-export interface ScanEntry {
-  kind: ResourceKind;
-  source: Source;
-  resourceUrl?: string;
+
+export interface Summary {
+  sources: number;
+  findings: number;
+  errors: number;
+  warnings: number;
+  dependencies: number;
+  unresolved: number;
+  gaps: number;
+  bytes: number;
+  elapsedMs: number;
 }
-export interface Report {
-  timings?: ScanTimings;
-  schemaVersion: 1;
-  indexSchemaVersion: 1;
+
+/** The scan result. */
+export interface Manifest {
+  schemaVersion: 2;
   scannerVersion: string;
-  scanId: string;
-  scopeKey: string;
-  scanStatus: ScanStatus;
-  runStatus: 'finished' | 'cancelled';
-  startedAt: string;
-  finishedAt: string;
-  configuration: { context: Context; budgets: Budgets; dependencyMode: 'single' | 'recursive' };
-  entryAnalysisIds: string[];
-  resources: Resource[];
-  analysisInstances: AnalysisInstance[];
-  references: Reference[];
-  globalTargets: Target[];
-  globalAccesses: GlobalAccess[];
-  findings: Finding[];
-  unresolved: Unresolved[];
-  coverage: {
-    analyzed: number;
-    failed: number;
-    unresolved: number;
-    bytes: number;
-    dependencyMode: 'single' | 'recursive';
-    sourceMapped: number;
-    elapsedMs: number;
-  };
+  status: ScanStatus;
+  dependencyMode: DependencyMode;
+  summary: Summary;
+  /** Source ids of the entries, in request order. */
+  entries: string[];
+  sources: ManifestSource[];
+  findings: ManifestFinding[];
+  dependencies: ManifestDependency[];
+  gaps: ManifestGap[];
 }
-/** Exclusive coordinator wall times, measured with a monotonic clock. */
-export type ScanStage =
-  | 'setup'
-  | 'load'
-  | 'analysis'
-  | 'records'
-  | 'locations'
-  | 'deduplication'
-  | 'dependencies'
-  | 'sourceMaps'
-  | 'moduleLinking'
-  | 'checkpoint'
-  | 'finalize'
-  | 'validation'
-  | 'compact'
-  | 'other';
-export interface ScanTimings {
-  /** Native work through result construction; excludes final output I/O and bindings. */
-  totalMs: number;
-  /** Missing stages did not run. These values sum to totalMs. */
-  stages: Partial<Record<ScanStage, number>> & { other: number };
-  /** Aggregated by resource URL and kind, across execution contexts and analysis passes. */
-  resources: {
-    kind: ResourceKind;
-    url?: string;
-    inline?: { offset: number; parentUrl?: string };
-    stages: Partial<Record<ScanStage, number>>;
-    /** Tasks overlap across workers. JS subphases are included in analysis. Not CPU times. */
-    tasks: Partial<
-      Record<
-        'load' | 'analysis' | 'cacheHit' | 'jsParse' | 'jsSemantic' | 'jsVisit',
-        { count: number; elapsedMs: number }
-      >
-    >;
-  }[];
-}
-export interface ScanOptions {
-  /** Include stage and per-resource timings in the returned result. Off by default. */
-  timings?: boolean;
-  /** Compact findings by default; full reports include every read and index record. */
-  reportFormat?: 'compact' | 'full';
-  scriptMode?: ScriptMode;
-  executionEnvironment?: Environment;
-  /** Original resource URL for source text or an offline file. */
-  resourceUrl?: string;
-  /** Document base fallback. Valid HTML base elements are read automatically. */
-  baseUrl?: string;
-  /** Page context for standalone JavaScript. HTML import maps are read automatically. */
-  importMap?: ImportMap;
-  /** Resolution base for a supplied import map. */
-  importMapBaseUrl?: string;
-  publicPath?: string;
-  scopeKey?: string;
-  scope?: Record<string, unknown>;
-  versions?: Record<string, string>;
-  dependencyMode?: 'single' | 'recursive';
-  budgets?: Partial<Budgets>;
-  signal?: AbortSignal;
-  access?: { protocols?: string[]; hosts?: string[]; fileRoots?: string[] };
-  /** Substitute local files or content for resolved URLs, for offline scanning. */
-  resourceMappings?: Record<string, Source>;
-  requestHeaders?: Record<string, Record<string, string>>;
-  proxy?: string;
-  jsonlPath?: string;
-  reportPath?: string;
-  checkpointPath?: string;
-  resumePath?: string;
-  sourceMaps?: boolean;
-  resume?: Checkpoint;
-}
-export type ScanResult<T extends ScanOptions> = T extends { reportFormat: 'full' }
-  ? Report
-  : 'reportFormat' extends keyof T
-    ? 'full' extends T['reportFormat']
-      ? Manifest | Report
-      : Manifest
-    : Manifest;
-export type StreamRecord =
-  | { type: 'resetAnalysis'; value: { analysisId: string } }
-  | {
-      type: keyof Pick<
-        Report,
-        | 'resources'
-        | 'analysisInstances'
-        | 'references'
-        | 'globalTargets'
-        | 'globalAccesses'
-        | 'findings'
-        | 'unresolved'
-      >;
-      value: unknown;
-    }
-  | {
-      type: 'summary';
-      value: Omit<
-        Report,
-        | 'resources'
-        | 'analysisInstances'
-        | 'references'
-        | 'globalTargets'
-        | 'globalAccesses'
-        | 'findings'
-        | 'unresolved'
-      >;
-    };

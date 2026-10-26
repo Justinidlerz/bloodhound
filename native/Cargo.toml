@@ -4,11 +4,16 @@ version = "0.1.1"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"
+description = "Static scanner that finds global-environment pollution in JavaScript and HTML"
+
 [lib]
 crate-type = ["cdylib"]
+
 [dependencies]
+# Node.js bridge
 napi = { version = "=3.14.2", features = ["napi8", "serde-json"] }
 napi-derive = "=3.6.12"
+# JavaScript parsing and scope analysis
 oxc_allocator = "=0.154.0"
 oxc_ast = "=0.154.0"
 oxc_ast_visit = "=0.154.0"
@@ -16,16 +21,20 @@ oxc_parser = "=0.154.0"
 oxc_semantic = "=0.154.0"
 oxc_span = "=0.154.0"
 oxc_syntax = "=0.154.0"
+# HTML tokenization with source spans
+html5gum = "=0.8.4"
+# User-supplied URL exclusion patterns
+regex = "1"
+# Serialization of requests and manifests
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Resource loading
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
 url = { version = "2", features = ["serde"] }
+# Content identity and source maps
 sha2 = "0.10"
-html5gum = "=0.8.4"
-cssparser = "=0.38.0"
 sourcemap = "=9.3.2"
-jsonschema = { version = "=0.59.0", default-features = false }
 base64 = "0.22"
-time = { version = "0.3", features = ["formatting"] }
+
 [build-dependencies]
 napi-build = "2"

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -10,6 +11,7 @@ import {
 import { execFileSync } from 'node:child_process';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { dependencyOrder, releasePlanPath, workspacePackages } from './workspace-packages.mjs';
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const targets = JSON.parse(readFileSync('.github/native-targets.json', 'utf8'));
@@ -22,8 +24,8 @@ if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     `Native artifact mismatch: expected ${expected.join(', ')}, found ${actual.join(', ')}`,
   );
 }
-const { defaults } = await import(pathToFileURL(resolve('dist/index.js')));
-if (defaults().versions.scanner !== pkg.version) throw new Error('Native and npm versions differ');
+const { version } = await import(pathToFileURL(resolve('dist/index.js')));
+if (version().scanner !== pkg.version) throw new Error('Native and npm versions differ');
 const destination = resolve('artifacts');
 mkdirSync(destination, { recursive: true });
 const packages = [];
@@ -35,7 +37,7 @@ function pack(directory, manifest, required, nativeFiles) {
       { cwd: directory, encoding: 'utf8' },
     ),
   );
-  if (packed.name !== manifest.name || packed.version !== pkg.version) {
+  if (packed.name !== manifest.name || packed.version !== manifest.version) {
     throw new Error(`Packed metadata mismatch: ${manifest.name}`);
   }
   const paths = packed.files.map(({ path }) => path);
@@ -51,7 +53,7 @@ function pack(directory, manifest, required, nativeFiles) {
   const archive = readFileSync(packed.filename);
   const entry = {
     name: manifest.name,
-    version: pkg.version,
+    version: manifest.version,
     filename: basename(packed.filename),
     integrity: `sha512-${createHash('sha512').update(archive).digest('base64')}`,
     bytes: archive.length,
@@ -74,23 +76,18 @@ for (const { platform } of targets) {
   copyFileSync('LICENSE', join(directory, 'LICENSE'));
   pack(directory, manifest, [binary], [binary]);
 }
+const platformPackages = [...packages];
 const packed = pack(
   '.',
   pkg,
-  [
-    'dist/index.js',
-    'dist/index.d.ts',
-    'dist/types.d.ts',
-    'schemas/report.schema.json',
-    'schemas/index.schema.json',
-  ],
+  ['dist/index.js', 'dist/index.d.ts', 'dist/native.js', 'dist/native.d.ts', 'dist/types.d.ts'],
   [],
 );
 const published = JSON.parse(
   execFileSync('tar', ['-xOf', packed.filename, 'package/package.json'], { encoding: 'utf8' }),
 );
 const dependencies = Object.fromEntries(
-  packages.slice(0, -1).map(({ name, version }) => [name, version]),
+  platformPackages.map(({ name, version }) => [name, version]),
 );
 if (
   Object.keys(published.optionalDependencies ?? {}).length !== targets.length ||
@@ -100,9 +97,33 @@ if (
 ) {
   throw new Error('Core must depend on the exact versions of all platform packages');
 }
+const alreadyPacked = new Set(packages.map(({ name }) => name));
+for (const { directory, manifest } of dependencyOrder(workspacePackages())) {
+  if (alreadyPacked.has(manifest.name)) continue;
+  const entryPoints = [manifest.main, manifest.types]
+    .filter(Boolean)
+    .map((path) => path.replace(/^\.\//, ''));
+  pack(directory, manifest, entryPoints, []);
+  alreadyPacked.add(manifest.name);
+}
+let releasePackages = packages;
+if (existsSync(releasePlanPath)) {
+  const plan = JSON.parse(readFileSync(releasePlanPath, 'utf8'));
+  if (plan.mode !== 'check' && plan.packages.length > 0) {
+    const selected = new Map(plan.packages.map(({ name, version }) => [name, version]));
+    releasePackages = packages.filter(({ name }) => selected.has(name));
+    if (
+      releasePackages.length !== selected.size ||
+      releasePackages.some(({ name, version }) => selected.get(name) !== version)
+    ) {
+      throw new Error('Packed packages do not match the prepared release plan');
+    }
+  }
+}
 writeFileSync(
   join(destination, 'release-manifest.json'),
-  JSON.stringify({ registry: pkg.publishConfig.registry, packages }, null, 2) + '\n',
+  JSON.stringify({ registry: pkg.publishConfig.registry, packages: releasePackages }, null, 2) +
+    '\n',
 );
 copyFileSync('scripts/publish-ci.mjs', join(destination, 'publish-ci.mjs'));
 if (process.env.GITHUB_STEP_SUMMARY) {

@@ -1,6 +1,8 @@
 # @bloodhound-rs/core
 
-A Rust SDK that statically scans JavaScript, HTML, and their dependencies for global modifications and DOM/CSS risks. napi-rs generates the npm loader and method declarations. All scanning, fetching, resolution, and reporting run in Rust. The scanner never executes input code.
+A Rust-backed SDK that statically scans HTML and JavaScript for writes to shared globals, DOM insertion, and style injection. The result is a JSON-serializable Manifest v2 with source locations, dependency edges, severity, and a shortest entry-to-source chain. Input code is never executed.
+
+CSS files and inline `<style>` blocks are discovered and listed. CSS selectors, custom properties, animations, keyframes, and CSS imports are not analyzed. Direct writes to document-level inline styles remain detectable.
 
 ## Install
 
@@ -8,177 +10,134 @@ A Rust SDK that statically scans JavaScript, HTML, and their dependencies for gl
 pnpm add @bloodhound-rs/core
 ```
 
-Requires Node.js 22+. Keep optional dependencies enabled: the package manager installs the native binary for the running Node.js platform and architecture.
+Requires Node.js 22+. Keep optional dependencies enabled so the native package for the current platform is installed. Supported targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Linux musl is not supported.
 
-| Platform            | Binary package                        |
-| ------------------- | ------------------------------------- |
-| macOS Apple Silicon | `@bloodhound-rs/core-darwin-arm64`    |
-| macOS Intel         | `@bloodhound-rs/core-darwin-x64`      |
-| Linux glibc ARM64   | `@bloodhound-rs/core-linux-arm64-gnu` |
-| Linux glibc x64     | `@bloodhound-rs/core-linux-x64-gnu`   |
-| Windows x64         | `@bloodhound-rs/core-win32-x64-msvc`  |
-
-Linux musl is not supported. Install on the target system instead of copying `node_modules` between platforms.
-
-## Scan source text
+## SDK
 
 ```ts
-import { scanHtml, scanJs } from '@bloodhound-rs/core';
+import { scan, scanHtml, scanJs, defaults, version } from '@bloodhound-rs/core';
 
-const manifest = await scanHtml('<script>window.sharedConfig = {};</script>');
-console.log(manifest.globals);
-
-const javascript = await scanJs('globalThis.sharedConfig = {};', {
-  scriptMode: 'module',
-  executionEnvironment: 'window',
-});
-```
-
-String inputs are source text. For HTML, the scanner reads base elements, import maps, script modes, inline code, and resource links automatically. Recursive scanning is the default. JavaScript callers supply `scriptMode` and `executionEnvironment`; missing context produces coverage gaps.
-
-When the HTML uses relative URLs, supply its original page URL:
-
-```ts
 const manifest = await scanHtml(htmlText, {
   resourceUrl: 'https://example.com/page.html',
+  budgets: { maxResources: 200, timeoutMs: 60_000 },
 });
-```
 
-Text needs no URL when it contains only inline code or absolute dependencies. Without a document URL or an absolute HTML base, relative references remain unresolved with `missing-base-url`. An attachment filename is not a page URL.
+for (const finding of manifest.findings) {
+  const source = manifest.sources.find((s) => s.id === finding.source);
+  console.log(finding.severity, finding.rule, finding.target, source?.chain, finding.location);
+}
 
-Explicit source objects load files or URLs:
-
-```ts
+await scanJs('window.shared = 1', { scriptMode: 'module' });
 await scanHtml({ type: 'file', path: './page.html' });
 await scanHtml({ type: 'url', url: 'https://example.com/page.html' });
-```
+await scan([{ kind: 'js', source: { type: 'file', path: './app.js' }, scriptMode: 'module' }]);
 
-`scan(entries, options)` accepts multiple `{ kind, source }` entries. `scanResource(entry, options)` scans one resource and records its dependency edges without following them. These APIs also support CSS through `kind: 'css'`. A content source is `{ type: 'content', content, resourceUrl? }`.
-
-## Compact JSON output
-
-The default result is a `Manifest`:
-
-| Field                     | Contents                                                                              |
-| ------------------------- | ------------------------------------------------------------------------------------- |
-| `scanStatus`, `runStatus` | Completion, failure, partial coverage, or cancellation                                |
-| `summary`                 | Counts, bytes, elapsed time, dependency mode, and omitted read-access count           |
-| `sources`, `entries`      | Analyzed sources and entry points, using report-local IDs such as `s1`                |
-| `dependencies`            | Dependency edges, resolution results, source locations, and failure reasons           |
-| `globals`                 | Global declarations, writes, definitions, and deletes with target paths and locations |
-| `findings`                | DOM/CSS findings; global modifications already appear in `globals`                    |
-| `unresolved`              | Gaps grouped by source and reason, with exact counts and one `exampleLocation`        |
-
-Internal hashes, repeated context snapshots, read-only accesses, and duplicate global findings are absent from the compact output. Every global modification and DOM/CSS finding is retained. Source IDs identify an analysis in one context; the same resource may have multiple contexts. When multiple global environments occur, `sources[].scope` distinguishes them with report-local numbers.
-
-Lines start at 1. Columns start at 0 and count UTF-16 code units. Inline locations include a position in their containing document. Results are static candidates: they do not establish execution order or prove that a modification occurred at runtime. A partial report remains partial after compaction.
-
-## Text in, JSON stdout
-
-The SDK returns a JavaScript object. The caller chooses stdout or file persistence:
-
-```ts
-import { scanHtml } from '@bloodhound-rs/core';
-
-const manifest = await scanHtml(htmlText);
 process.stdout.write(JSON.stringify(manifest) + '\n');
 ```
 
-Runnable examples after building:
+Strings always mean source text. File paths and URLs use explicit source objects. Content sources accept `{ type: 'content', content, resourceUrl? }`. Supply a logical URL or `baseUrl` to resolve relative references in supplied text. Absolute dependencies and inline scripts can be scanned without a URL.
 
-```sh
-node examples/scan.mjs
-node examples/scan-html.mjs
-node examples/scan-stdin.mjs < page.html
-node examples/scan-stdin.mjs https://example.com/page.html < page.html > manifest.json
-```
+`scan`, `scanHtml`, and `scanJs` return the same `Promise<Manifest>`. JavaScript defaults to `classic`; choose `module` for ESM. HTML script tags determine their own mode. Recursive scanning is the default. `dependencyMode: 'single'` analyzes entries only and lists their dependencies without following them, including inline HTML scripts.
 
-Each example writes one JSON document to stdout. It does not create output files. `scan-html.mjs` reads a local fixture and uses its file URL to resolve that fixture's relative dependencies. There is no published CLI entry point.
+## Findings
 
-## Scan timings
+| Rule                   | Examples                                                                        | Default severity |
+| ---------------------- | ------------------------------------------------------------------------------- | ---------------- |
+| `global-write`         | `window.config = …`, classic top-level `var`, sloppy implicit globals           | warning          |
+| `document-write`       | `document.body.className = …`, document attributes                              | warning          |
+| `builtin-mutation`     | `Array.prototype.x = …`, `Object.assign = …`                                    | error            |
+| `host-api-override`    | `window.fetch = …`, `history.pushState = …`                                     | error            |
+| `dom-insertion`        | `document.body.appendChild(…)`, selected element insertion, `document.write(…)` | warning          |
+| `style-injection`      | injected `<style>` or stylesheet `<link>`, adopted stylesheets                  | warning          |
+| `document-style-write` | `document.body.style.overflow = …`                                              | warning          |
+| `global-listener`      | `window.addEventListener(…)`, document listeners                                | warning          |
+| `html-global-style`    | `<html style="…">`, `<body style="…">`                                          | info             |
 
-Enable timings to locate slow stages without expanding the default manifest:
+Ordinary element `style=` attributes in SSR markup are not findings. Expected browser state changes such as `document.title`, `document.cookie`, and navigation are excluded. A severity label is a default consumer policy, not proof that code is harmful.
 
-```ts
-const started = performance.now();
-const manifest = await scanHtml(htmlText, { timings: true });
-console.log({ sdkElapsedMs: performance.now() - started });
-console.table(manifest.timings?.stages);
-console.log(manifest.timings?.resources);
-```
+An inserted node is suppressed when it is removed later in the same straight-line block, or inside a returned cleanup function. A listener is suppressed when the same file contains a removal with the same event and handler reference. Conditions, source order, receiver and capture do not affect listener pairing. Handler aliases and arguments passed to local helpers are resolved; matching an event alone is insufficient. Inline anonymous callbacks remain outside the listener rule, and `once`/`signal` options count as their own removal mechanisms. Pairing does not prove that teardown executes.
 
-`timings.stages` contains exclusive wall times in milliseconds. Nested stages are subtracted from their parents; the values, including `other`, sum to `timings.totalMs`.
+The scan follows scripts belonging to the current document. Iframe and `srcdoc` references are listed as `not-followed / iframe-isolated-global`; their child documents and scripts are not loaded or analyzed. SVG/MathML contents are skipped with a coverage gap, and ordinary HTML after a self-closing foreign element remains eligible for scanning.
 
-| Stage                               | Work measured                                                                                             |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `setup`                             | Read options and prepare the run                                                                          |
-| `load`                              | Load resource batches, including HTTP, file/content reads, retries, and worker waits                      |
-| `analysis`                          | Analyze batches, including cache lookup, parsing, scope analysis, AST traversal, and internal conversions |
-| `records`                           | Build records and hashes, and cache analysis results                                                      |
-| `locations`                         | Convert source offsets to line/column and inline/source-map locations                                     |
-| `deduplication`                     | Look up existing global targets and access records                                                        |
-| `dependencies`                      | Resolve references and enqueue dependencies                                                               |
-| `sourceMaps`                        | Load and decode source maps when enabled                                                                  |
-| `moduleLinking`                     | Propagate imported constants and compare analysis passes                                                  |
-| `checkpoint`                        | Write optional checkpoints                                                                                |
-| `finalize`, `validation`, `compact` | Finalize coverage, validate the report, and build the compact manifest                                    |
-| `other`                             | Coordinator work outside named stages and instrumentation overhead                                        |
+## Manifest v2
 
-`timings.resources` aggregates work by resource URL and kind across contexts and passes. Each row has coordinator `stages` and worker `tasks` with counts and elapsed milliseconds. JavaScript tasks separate `jsParse`, `jsSemantic`, and `jsVisit`; all three are included in `analysis`. HTML and CSS parsing and traversal are measured together in `analysis`. A `cacheHit` task records reuse of a previous analysis. Worker task times can overlap and must not be added to coordinator stage times or treated as CPU time.
+| Field                             | Meaning                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| `schemaVersion`, `scannerVersion` | Format and scanner versions                                                          |
+| `status`                          | `completed`, `partial`, `failed`, or `cancelled`                                     |
+| `dependencyMode`                  | `single` or `recursive`                                                              |
+| `summary`                         | Source, finding, severity, dependency and gap counts; bytes and scan duration        |
+| `entries`                         | Entry source IDs, in request order                                                   |
+| `sources`                         | Logical URL, kind, mode, status, hash, referrers and shortest source chain           |
+| `findings`                        | Rule, severity, target, operation, confidence, location, snippet and optional detail |
+| `dependencies`                    | Source/target IDs, specifier, URL, status, reason and discovery location             |
+| `gaps`                            | Coverage limits grouped by source and reason, with occurrence counts                 |
 
-Timing stops after native result construction, before the final JSONL summary, report-file output, JSON serialization, and Node.js conversion. The caller's `performance.now()` measurement includes the SDK call boundary. Timings are available on compact and full results, remain available through `compactReport`, and include work interrupted by scan budgets. A resumed scan reports timings for its current run. Timing uses the existing budgets and analysis rules. Instrumentation overhead counts toward the scan budget.
+Lines are 1-based, columns are 0-based UTF-16 units. Inline findings use fragment-relative coordinates; `source.inline` gives their origin in the parent. For a first-line finding, add the origin column; for later lines, use the finding column unchanged. The bundler plugin performs this conversion automatically. Source maps optionally add `location.original`.
 
-## Full reports and indexes
+CSS dependency edges use `not-followed` with `reason: 'css-not-analyzed'`. CSS dependencies do not create analyzed source records. An explicit `kind: 'css'` entry is loaded and listed with no findings. Unloaded or unparseable JavaScript produces unresolved edges and coverage gaps.
 
-Use `reportFormat: 'full'` when querying all reads, cross-resource access paths, or report diffs:
+## Offline scans, limits and cancellation
 
 ```ts
-import { scanJs, GlobalIndex, compactReport } from '@bloodhound-rs/core';
-
-const report = await scanJs(code, {
-  scriptMode: 'classic',
-  executionEnvironment: 'window',
-  reportFormat: 'full',
-  scopeKey: 'checkout-page',
+const controller = new AbortController();
+const manifest = await scanJs('import "./shared.js";', {
+  scriptMode: 'module',
+  resourceUrl: 'https://example.com/app.js',
+  access: { protocols: [] },
+  resourceMappings: {
+    'https://example.com/shared.js': { type: 'content', content: 'window.shared = 1;' },
+  },
+  sourceMaps: true,
+  signal: controller.signal,
 });
-const index = new GlobalIndex(report);
-for (const target of index.findTargets(['sharedConfig'], 'global-object')) {
-  console.log(index.sources(target.targetId));
-}
-const manifest = compactReport(report);
 ```
 
-`GlobalIndex`, `validateReport`, `indexArtifact`, `adaptReport`, `diffReports`, and `runtimeCandidates` accept full `Report` objects. `compactReport` can also reduce an existing full report without scanning again.
+`resourceMappings` supplies content or local files for resolved URLs, including source maps. `access` can restrict schemes, hosts and file roots. `requestHeaders` is keyed by host and optional port. Redirects are checked at every hop. URLs with embedded credentials are rejected.
 
-Full reports retain `scopeKey` to separate global environments, `contentHash` to match resource contents, and internal IDs/fingerprints for joins and comparisons. Set a readable `scopeKey` when comparing multiple scans of the same page. These fields are not required to consume the default manifest.
+`excludeUrls` takes regex source strings (Rust regex syntax, no lookaround) such as `['/vendor/', '\\.min\\.js($|\\?)']`. A recursively discovered dependency whose resolved logical URL matches is not loaded or analyzed. It stays visible in `dependencies` as `not-followed` with `reason: 'excluded'` and creates no source record. If an entry itself matches, the scan rejects instead of returning an empty manifest. Inline scripts are not matched.
 
-## Optional context and recovery
+`defaults().budgets` reports resource count, byte, depth, AST-step, candidate, concurrency and timeout limits. Workers each load then analyze one resource; their count is `min(concurrency, analysisConcurrency)`. Cancellation is cooperative. A blocking network request can take up to its request timeout to return. Budget stops and unknown dynamic dependencies remain visible in the manifest.
 
-| Option                                              | Purpose                                                                  |
-| --------------------------------------------------- | ------------------------------------------------------------------------ |
-| `resourceUrl`, `baseUrl`                            | Original resource URL and optional document-base fallback                |
-| `importMap`, `importMapBaseUrl`                     | Page mappings when scanning JavaScript outside its HTML document         |
-| `resourceMappings`                                  | Substitute local files or text for resolved URLs during offline scanning |
-| `budgets`, `signal`                                 | Bound work or cancel it with an `AbortSignal`                            |
-| `access`                                            | Restrict protocols, hosts, and file roots                                |
-| `sourceMaps`                                        | Add original-source locations when maps are available                    |
-| `requestHeaders`, `proxy`                           | Configure HTTP fetching                                                  |
-| `checkpointPath`, `resumeScan(checkpoint, options)` | Persist recovery state and scan the saved entries again                  |
+The scanner tracks local aliases, IIFE parameters, finite string candidates and browser import maps. It does not infer arbitrary function results or cross-module exported values. Worker environments, foreign HTML content and late import maps currently produce explicit coverage gaps. See [supported behavior and limits](docs/support.md).
 
-HTML import maps and resource lists require no duplicate parameters. External modules resolve imports against their own URL. Browser module resolution does not search `node_modules` or infer extensions.
+## Rollup / Rolldown
 
-No report files are written by default. Optional `reportPath` persists the selected output format; `jsonlPath` writes detailed incremental records. Checkpoints retain full analysis state regardless of output format. Authentication headers and proxy settings must be supplied again when resuming. See [Support](docs/support.md) for analysis and recovery limits.
+```js
+import { bloodhound } from '@bloodhound-rs/rollup-plugin';
 
-## Development
+export default {
+  input: 'src/main.js',
+  output: { dir: 'dist', format: 'es', sourcemap: 'hidden' },
+  plugins: [
+    bloodhound({
+      allowGlobals: ['window.__APP_VERSION__'],
+      rules: { 'host-api-override': 'error', 'builtin-mutation': 'error' },
+    }),
+  ],
+};
+```
 
-Requires pnpm 10.20.0, Rust 1.97+, and platform C/C++ build tools.
+The plugin scans emitted HTML or entry chunks in memory, follows bundle dependencies, emits `bloodhound.manifest.json`, and maps diagnostics back to original sources. It runs offline by default. See the [plugin documentation](packages/rollup-plugin/README.md).
+
+## Manifest Playground
+
+Run `pnpm playground` in this repository and open `http://127.0.0.1:4173`. Drop a Manifest v2 JSON file to explore findings, source files, dependency relationships and coverage gaps. Group by rule/type, file, URL folder or entry dependency tree; select any record to see its snippet, location and related files.
+
+The viewer processes files locally in the browser. It displays the manifest's evidence and does not infer missing listener cleanup or business application ownership. See the [Playground documentation](playground/README.md) for navigation, build commands and interpretation.
+
+## Development and migration
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
 pnpm test
+pnpm example
+pnpm example:html
+pnpm example:rollup
+pnpm example:rolldown
 ```
 
-`native/src/engine/` contains loading and scheduling; `js/` contains evaluation, bindings, and effect analysis; `markup/` contains HTML/CSS parsing; `report/` builds compact manifests. `src/` contains type declarations only. napi-rs generates `dist/index.js` and `dist/index.d.ts`.
+The build needs Rust 1.97+ for Oxc 0.154.0. [Architecture](docs/technical-design.md), [tests](docs/testing.md), [verification](docs/verification.md), and [release process](docs/releasing.md) describe the implementation and checks.
 
-Changesets keeps core and the five binary packages at the same version. CI verifies binary package publication before publishing core. See [Testing](docs/testing.md), [Technical design](docs/technical-design.md), [Verification](docs/verification.md), and [Releasing](docs/releasing.md).
+Manifest v2 replaces the previous full/compact reports. Global mutations now appear in `findings`; use `status` instead of `scanStatus`, and `gaps` for analysis coverage. The old query/index, checkpoint/resume, report adapters, runtime-candidate helpers, timings, and JSONL APIs are removed. Use `dependencyMode: 'single'` instead of `scanResource`. `version()` replaces the old version helpers. This is a breaking API change.
