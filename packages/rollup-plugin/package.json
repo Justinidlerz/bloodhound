@@ -1,6 +1,6 @@
 {
   "name": "@bloodhound-rs/rollup-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rollup, Rolldown, and Vite plugin that scans emitted bundles with @bloodhound-rs/core during generateBundle",
   "type": "module",
   "license": "MIT",
