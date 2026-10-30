@@ -1,6 +1,6 @@
 {
   "name": "@bloodhound-rs/core-linux-x64-gnu",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "cpu": [
     "x64"
   ],
@@ -8,7 +8,7 @@
   "files": [
     "bloodhound.linux-x64-gnu.node"
   ],
-  "description": "Rust static resource scanner with a thin Node.js SDK",
+  "description": "Rust static scanner that finds global-environment pollution in JavaScript and HTML",
   "license": "MIT",
   "engines": {
     "node": ">=22"

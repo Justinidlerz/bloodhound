@@ -1,6 +1,6 @@
 {
   "name": "@bloodhound-rs/core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Rust static scanner that finds global-environment pollution in JavaScript and HTML",
   "type": "module",
   "license": "MIT",
