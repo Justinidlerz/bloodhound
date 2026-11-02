@@ -35,23 +35,33 @@ const { manifest } = parseManifest(jsonText);
 const index = new ManifestIndex(manifest);
 ```
 
-## Atlas Platform
+## Ant Design example
 
-Pass the platform's component library and the manifest already loaded by the platform. No selector is rendered.
+Install `antd` in the host application and pass its components with adapters for input events and table data. The host loads the manifest; this example renders the report without a resource selector.
 
 ```tsx
-import { Button, Input, Select, Table, Tag } from '@m4b-design/components';
-import { ManifestViewer, type Manifest } from '@bloodhound-rs/playground';
+import { Button, Input, Select, Table, Tag } from 'antd';
+import { ManifestViewer, type Manifest, type ManifestComponents } from '@bloodhound-rs/playground';
 import '@bloodhound-rs/playground/styles.css';
 
-const components = { Button, Input, Select, Table, Tag };
+const components: Partial<ManifestComponents> = {
+  Button: (props) => <Button {...props} />,
+  Select,
+  Tag,
+  Input: ({ onChange, ...props }) => (
+    <Input {...props} onChange={(event) => onChange(event.target.value)} />
+  ),
+  Table: ({ data, ...props }) => <Table {...props} dataSource={data} />,
+};
 
 export function ScanReport({ manifest }: { manifest: Manifest }) {
   return <ManifestViewer manifest={manifest} components={components} />;
 }
 ```
 
-`components={M4B}` also accepts the library namespace. Picking the five exports explicitly keeps the host's bundle imports narrow. Bloodhound does not import M4B or inject a theme provider. Its CSS only styles the viewer's layout, default table and code excerpt, under `bh-` classes. Existing providers and component themes remain owned by the host.
+Ant Design's `Input.onChange` receives an event, while the viewer expects a string. Its `Table` uses `dataSource`, while the viewer supplies `data`. The adapters above translate these props. Define the component map outside rendering to keep component identities stable.
+
+Bloodhound does not depend on a UI library or inject a theme provider. Its CSS only styles the viewer's layout, default table and code excerpt, under `bh-` classes. Existing providers and component themes remain owned by the host.
 
 Components with different props use a small adapter. `Input.onChange` and `Select.onChange` receive a string. `Table` receives `data`, `columns`, `rowKey="id"` and `pagination={false}`. Missing slots use native HTML controls.
 

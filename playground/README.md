@@ -84,4 +84,4 @@ The production assets are written to `playground/dist/`. Serve that directory fr
 
 ## React integration
 
-`/react.html` renders the `ManifestPlayground` export from `@bloodhound-rs/playground`, which composes the independent `ManifestSelector` and `ManifestViewer` components. The development server prints its URL, including any `--manifest` preload. Atlas Platform can mount `ManifestViewer` alone and pass its existing UI components and resource loader. See [component integration](../packages/playground/README.md) for the API.
+`/react.html` renders the `ManifestPlayground` export from `@bloodhound-rs/playground`, which composes the independent `ManifestSelector` and `ManifestViewer` components. The development server prints its URL, including any `--manifest` preload. Host applications can mount `ManifestViewer` alone and pass their existing UI components and resource loader. See [component integration](../packages/playground/README.md) for the API and an Ant Design example.
