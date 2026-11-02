@@ -96,7 +96,7 @@ for (const [name, run] of Object.entries(bundlers)) {
     );
   });
 
-  test(`${name}: scans entry chunks, emits the manifest, and maps warnings to source files`, async (t) => {
+  test(`${name}: delivers the manifest to the callback and maps warnings to source files`, async (t) => {
     const dir = await project(t);
     let seen;
     const { output, logs } = await run({
@@ -105,17 +105,19 @@ for (const [name, run] of Object.entries(bundlers)) {
       plugins: [
         bloodhound({
           allowGlobals: ['__APP_VERSION__'],
-          onManifest: (manifest, context) => {
+          onManifest: async (manifest, context) => {
+            await Promise.resolve();
             seen = { manifest, diagnostics: context.diagnostics };
           },
         }),
       ],
     });
-    const manifest = manifestOf(output);
+    assert.ok(seen, 'the manifest callback completes before the build returns');
+    const { manifest } = seen;
+    assert.ok(!output.some((item) => item.fileName === MANIFEST), 'the callback owns the manifest');
     assert.equal(manifest.schemaVersion, 2);
     assert.equal(manifest.sources.filter((s) => s.kind === 'js').length, 2, 'entry + lazy chunk');
     assert.ok(manifest.findings.every((f) => f.location.original));
-    assert.deepEqual(seen.manifest, manifest);
     const globals = seen.diagnostics.filter((d) => d.kind === 'global');
     assert.deepEqual(globals.map((d) => `${d.rule} ${d.targets.join(',')}`).sort(), [
       'global-write window.__legacy',
@@ -160,9 +162,9 @@ for (const [name, run] of Object.entries(bundlers)) {
     assert.equal(css, undefined);
   });
 
-  test(`${name}: error severity fails the build after the manifest is emitted`, async (t) => {
+  test(`${name}: error severity fails the build after the manifest callback runs`, async (t) => {
     const dir = await project(t);
-    let emitted = false;
+    let received = false;
     await assert.rejects(
       run({
         dir,
@@ -171,7 +173,7 @@ for (const [name, run] of Object.entries(bundlers)) {
             globals: 'error',
             allowGlobals: ['__APP_VERSION__', 'document.*'],
             onManifest: () => {
-              emitted = true;
+              received = true;
             },
           }),
         ],
@@ -183,7 +185,7 @@ for (const [name, run] of Object.entries(bundlers)) {
         return true;
       },
     );
-    assert.ok(emitted);
+    assert.ok(received);
   });
 
   test(`${name}: manifest can be disabled and references outside the bundle are not fetched`, async (t) => {
