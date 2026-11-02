@@ -81,3 +81,7 @@ pnpm build:playground
 ```
 
 The production assets are written to `playground/dist/`. Serve that directory from an HTTP server; opening `index.html` directly with `file:` does not support the module worker. The development server binds to loopback only and serves generated playground assets.
+
+## React integration
+
+`/react.html` renders the `ManifestPlayground` export from `@bloodhound-rs/playground`, which composes the independent `ManifestSelector` and `ManifestViewer` components. The development server prints its URL, including any `--manifest` preload. Atlas Platform can mount `ManifestViewer` alone and pass its existing UI components and resource loader. See [component integration](../packages/playground/README.md) for the API.

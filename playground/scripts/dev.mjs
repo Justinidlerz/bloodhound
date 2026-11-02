@@ -136,6 +136,10 @@ async function rebuild() {
 }
 const watchers = [
   watch(`${root}src`, { recursive: true }, schedule),
+  watch(`${root}../packages/manifest/src`, { recursive: true }, schedule),
+  watch(`${root}../packages/playground/src`, { recursive: true }, schedule),
+  watch(`${root}react.html`, schedule),
+  watch(`${root}react.css`, schedule),
   watch(`${root}index.html`, schedule),
   watch(`${root}styles.css`, schedule),
   watch(`${root}icon.svg`, schedule),
@@ -159,6 +163,9 @@ server.listen(port, '127.0.0.1', () => {
       ? `${baseUrl}/?manifest=${encodeURIComponent(manifestUrl)}`
       : undefined;
   console.log(`Bloodhound Playground: ${preload ?? baseUrl}`);
+  const reactUrl = new URL(preload ?? baseUrl);
+  reactUrl.pathname = '/react.html';
+  console.log(`React components: ${reactUrl.href}`);
   console.log(`Source preview directory: ${projectRoot}`);
   console.log(
     preload

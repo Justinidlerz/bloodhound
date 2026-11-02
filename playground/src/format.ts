@@ -1,3 +1,5 @@
+import { safeUrl } from '@bloodhound-rs/manifest';
+export { safeUrl } from '@bloodhound-rs/manifest';
 /** Every interpolated value is escaped unless it was built with this template. */
 export class Markup {
   constructor(readonly value: string) {}
@@ -41,17 +43,6 @@ export function badge(value: string): Markup {
         ? 'green'
         : 'neutral';
   return html`<span class="badge ${color}">${human(value)}</span>`;
-}
-export function safeUrl(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password
-      ? url.href
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 export function externalLink(url: string | undefined): Markup {
   const href = safeUrl(url);

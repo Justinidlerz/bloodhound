@@ -1,0 +1,117 @@
+.bh-viewer,
+.bh-selector {
+  --bh-border: var(--color-border, #dce1e8);
+  --bh-muted: var(--color-text-3, #667085);
+  --bh-accent: var(--color-primary-light-1, #eef2ff);
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  min-width: 0;
+}
+.bh-controls,
+.bh-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 12px;
+}
+.bh-selector input:not([type='file']),
+.bh-viewer input {
+  min-width: 220px;
+}
+.bh-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 230px) minmax(0, 1fr);
+  gap: 20px;
+}
+.bh-groups {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  overflow: auto;
+  max-height: 65vh;
+}
+.bh-groups > * {
+  text-align: left;
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+  white-space: normal;
+}
+.bh-results {
+  min-width: 0;
+}
+.bh-table-scroll {
+  overflow-x: auto;
+}
+.bh-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.bh-table th,
+.bh-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--bh-border);
+  overflow-wrap: anywhere;
+}
+.bh-table td {
+  max-width: 400px;
+}
+.bh-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--bh-border);
+  border-radius: 4px;
+}
+.bh-detail {
+  border-top: 1px solid var(--bh-border);
+  padding-top: 12px;
+}
+.bh-path {
+  overflow-wrap: anywhere;
+}
+.bh-muted,
+.bh-line-number {
+  color: var(--bh-muted);
+}
+.bh-code pre,
+.bh-snippet {
+  overflow: auto;
+  max-height: 500px;
+  padding: 12px;
+  border: 1px solid var(--bh-border);
+  border-radius: 4px;
+  font: 13px/1.6 monospace;
+}
+.bh-snippet {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bh-line-number {
+  display: inline-block;
+  min-width: 5ch;
+  margin-right: 16px;
+  user-select: none;
+  text-align: right;
+}
+.bh-code [data-highlight] {
+  background: var(--bh-accent);
+}
+.bh-code mark {
+  background: #fff1a8;
+  color: #1d2939;
+}
+.bh-viewer summary {
+  cursor: pointer;
+  margin-block: 12px;
+}
+@media (max-width: 700px) {
+  .bh-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bh-groups {
+    max-height: 200px;
+  }
+}

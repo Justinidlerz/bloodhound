@@ -12,6 +12,21 @@ pnpm add @bloodhound-rs/core
 
 Requires Node.js 22+. Keep optional dependencies enabled so the native package for the current platform is installed. Supported targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Linux musl is not supported.
 
+## Embed the Playground
+
+```tsx
+import { ManifestViewer, ManifestPlayground } from '@bloodhound-rs/playground';
+import '@bloodhound-rs/playground/styles.css';
+
+// Platform-owned report and resource selection.
+<ManifestViewer manifest={manifest} components={components} loadText={loadText} />;
+
+// Includes the file/URL selector.
+<ManifestPlayground components={components} loadText={loadText} />;
+```
+
+Install `@bloodhound-rs/playground` in a React 18/19 host. The package supports injected UI components and source loading, and exports headless parsing through `@bloodhound-rs/playground/manifest`. It is built and versioned alongside the scanner packages through Changesets. See [Playground integration](packages/playground/README.md) for the API.
+
 ## SDK
 
 ```ts
