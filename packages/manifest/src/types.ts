@@ -22,6 +22,7 @@ export type DependencyMode = 'single' | 'recursive';
  * | `style-injection`      | `<style>`/`<link>` inserted by script without removal               |
  * | `document-style-write` | `document.body.style.x = …`, `documentElement.style.setProperty(…)` |
  * | `global-listener`      | `window.addEventListener(…)` without `removeEventListener`          |
+ * | `module-state-write`   | function/callback writes to cached ESM module state                |
  * | `html-global-style`    | `style=` attribute on `<html>`/`<body>`                             |
  */
 export type Rule =
@@ -33,12 +34,13 @@ export type Rule =
   | 'style-injection'
   | 'document-style-write'
   | 'global-listener'
+  | 'module-state-write'
   | 'html-global-style';
 
 export type Severity = 'info' | 'warning' | 'error';
 
 /**
- * `high`: the receiver is provably the global object, `document`, or a builtin.
+ * `high`: the target resolves to a global, `document`, builtin, or module binding.
  * `medium`: the receiver was tracked through a reassignable alias or a branch.
  */
 export type Confidence = 'high' | 'medium';
@@ -105,7 +107,7 @@ export interface ManifestFinding {
   source: string;
   rule: Rule;
   severity: Severity;
-  /** Dotted path of the polluted target, e.g. `window.sharedConfig`. */
+  /** Target path, e.g. `window.sharedConfig` or the ESM binding `ready`. */
   target: string;
   /** `write` | `update` | `define` | `delete` | `declare` | `insert` | `listen` | `style`. */
   operation: string;

@@ -288,6 +288,9 @@ pub enum Rule {
     /// An event listener registered on `window` or `document` without a
     /// same-event, same-handler removal in the same resource.
     GlobalListener,
+    /// A function or callback writes to state owned by a cached ESM module.
+    /// Re-entering a page does not re-run the module's initialization.
+    ModuleStateWrite,
     /// `style=` attribute on `<html>`/`<body>` in HTML.
     HtmlGlobalStyle,
 }
@@ -303,7 +306,8 @@ impl Rule {
             | Self::DomInsertion
             | Self::StyleInjection
             | Self::DocumentStyleWrite
-            | Self::GlobalListener => Severity::Warning,
+            | Self::GlobalListener
+            | Self::ModuleStateWrite => Severity::Warning,
             Self::HtmlGlobalStyle => Severity::Info,
         }
     }
@@ -317,12 +321,12 @@ pub enum Severity {
     Error,
 }
 
-/// How confident the analyzer is that the finding targets a global.
+/// How confident the analyzer is that the finding targets shared state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
     /// The receiver is provably the global object, `document`, or a builtin
-    /// (direct reference or a const alias).
+    /// (direct reference or a const alias), or resolves to a module binding.
     High,
     /// The receiver was tracked through a mutable alias or a conditional
     /// branch, so a runtime reassignment could change the target.

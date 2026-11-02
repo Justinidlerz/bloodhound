@@ -440,6 +440,20 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
 
     // ----- effects --------------------------------------------------------
 
+    fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
+        self.module_state_reference(id);
+    }
+
+    fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+        if let Some(member) = target.as_member_expression() {
+            let (span, operation) = self
+                .write_context
+                .unwrap_or((target.span().into(), "write"));
+            self.module_state_member(member, span, operation);
+        }
+        walk::walk_simple_assignment_target(self, target);
+    }
+
     fn visit_assignment_expression(&mut self, a: &AssignmentExpression<'a>) {
         let assigned = match &a.left {
             AssignmentTarget::AssignmentTargetIdentifier(id) => self.symbol_of(id),
@@ -459,17 +473,29 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
             }
         }
         self.rule_assignment(a);
+        let operation = if a.operator.as_str() == "=" {
+            "write"
+        } else {
+            "update"
+        };
+        let previous = self.write_context.replace((a.span.into(), operation));
         self.visit_assignment_target(&a.left);
+        self.write_context = previous;
     }
 
     fn visit_update_expression(&mut self, u: &UpdateExpression<'a>) {
         self.rule_update(u);
+        let previous = self.write_context.replace((u.span.into(), "update"));
         walk::walk_update_expression(self, u);
+        self.write_context = previous;
     }
 
     fn visit_unary_expression(&mut self, u: &UnaryExpression<'a>) {
         if u.operator == UnaryOperator::Delete {
             self.rule_delete(u);
+            if let Some(member) = u.argument.get_inner_expression().as_member_expression() {
+                self.module_state_member(member, u.span.into(), "delete");
+            }
         }
         walk::walk_unary_expression(self, u);
     }

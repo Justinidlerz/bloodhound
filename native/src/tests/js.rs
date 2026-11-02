@@ -305,9 +305,12 @@ fn function_analysis_does_not_execute_captured_assignments() {
     );
     assert_eq!(
         finding_pairs(&a),
-        vec![(Rule::GlobalWrite, "window.shared".into())]
+        vec![
+            (Rule::ModuleStateWrite, "g".into()),
+            (Rule::GlobalWrite, "window.shared".into()),
+        ]
     );
-    assert_eq!(a.findings[0].confidence, Confidence::Medium);
+    assert_eq!(a.findings[1].confidence, Confidence::Medium);
 }
 
 #[test]

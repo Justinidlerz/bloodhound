@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import {
   ManifestIndex,
   OriginalSources,
@@ -6,6 +6,7 @@ import {
   type Filters,
   type Grouping,
   type Manifest,
+  type ManifestSource,
   type ProjectWorkspace,
   type RecordRow,
   type TextLoader,
@@ -13,11 +14,26 @@ import {
 } from '@bloodhound-rs/manifest';
 import { defaultComponents, type ManifestComponents, type TableColumn } from './components.js';
 import { SourcePreview } from './SourcePreview.js';
+import { ViewerLayout } from './ViewerLayout.js';
+import { englishMessages } from './locales/en.js';
+import { MessagesProvider, useMessages, type PlaygroundMessages } from './messages.js';
+
+export interface RecordRenderContext {
+  selected: boolean;
+  openDetails: () => void;
+  components: ManifestComponents;
+  messages: PlaygroundMessages;
+}
+export type RecordRenderer = (row: RecordRow, context: RecordRenderContext) => ReactNode;
 
 export interface ManifestViewerProps {
   /** Already parsed report; replace this object when the build changes. */
   manifest: Manifest;
   components?: Partial<ManifestComponents>;
+  messages?: Partial<PlaygroundMessages>;
+  /** Optional first/last columns for host-owned markers, tags and actions. */
+  renderRecordBefore?: RecordRenderer;
+  renderRecordAfter?: RecordRenderer;
   /** Base URL for relative source map references. */
   manifestUrl?: string;
   workspace?: ProjectWorkspace;
@@ -29,7 +45,7 @@ export interface ManifestViewerProps {
 }
 
 /** Display only: no file picker, manifest request, router or application provider. */
-export function ManifestViewer(props: ManifestViewerProps) {
+export function ManifestViewer({ messages = englishMessages, ...props }: ManifestViewerProps) {
   const { manifest, manifestUrl, workspace, loadText } = props;
   const [session, setSession] = useState({
     manifest,
@@ -47,7 +63,11 @@ export function ManifestViewer(props: ManifestViewerProps) {
   ) {
     setSession({ manifest, manifestUrl, workspace, loadText, version: session.version + 1 });
   }
-  return <ViewerSession key={session.version} {...props} />;
+  return (
+    <MessagesProvider messages={messages}>
+      <ViewerSession key={session.version} {...props} />
+    </MessagesProvider>
+  );
 }
 
 const views: View[] = ['findings', 'sources', 'dependencies', 'gaps'];
@@ -72,7 +92,10 @@ function ViewerSession({
   pageSize = 50,
   className = '',
   onSelect,
+  renderRecordBefore,
+  renderRecordAfter,
 }: ManifestViewerProps) {
+  const { text: t, label, messages } = useMessages();
   const ui = { ...defaultComponents, ...components };
   const { Button, Input, Select, Table, Tag } = ui;
   const index = useMemo(() => new ManifestIndex(manifest), [manifest]);
@@ -115,162 +138,272 @@ function ViewerSession({
     if (row) select(row);
   }
 
+  function sourceTitle(source: ManifestSource) {
+    if (source.inline) return t('source.inline', { kind: label(source.kind), id: source.id });
+    if (!source.url)
+      return t('source.anonymous', { kind: label(source.kind).toUpperCase(), id: source.id });
+    return sourceName(source);
+  }
+
+  function recordTitle(record: RecordRow) {
+    if (record.view === 'sources' && record.source)
+      return sourceTitle(index.sources.get(record.source)!);
+    if (
+      record.view === 'dependencies' &&
+      'from' in record.data &&
+      !record.data.specifier &&
+      !record.data.url &&
+      !record.data.to
+    )
+      return t('record.unresolved');
+    return record.title;
+  }
+
+  function groupTitle(group: (typeof groups)[number]) {
+    const source =
+      filters.grouping === 'source' || filters.grouping === 'entry'
+        ? index.sources.get(group.id)
+        : undefined;
+    return source ? sourceTitle(source) : label(group.name);
+  }
+
+  function recordExtras(render: RecordRenderer, record: RecordRow) {
+    return (
+      <div className="bh-record-extras" onClick={(event) => event.stopPropagation()}>
+        {render(record, {
+          selected: selected === record.id,
+          openDetails: () => select(record),
+          components: ui,
+          messages,
+        })}
+      </div>
+    );
+  }
+
   const columns: TableColumn[] = [
     {
-      title: 'Record',
+      title: t('record.title'),
       dataIndex: 'title',
-      render: (_, row) => <Button onClick={() => select(row)}>{row.title}</Button>,
+      render: (_, row) => (
+        <Button variant="link" onClick={() => select(row)}>
+          {recordTitle(row)}
+        </Button>
+      ),
     },
-    { title: 'Type', dataIndex: 'type', render: (_, row) => row.type },
-    { title: 'Status', dataIndex: 'status', render: (_, row) => <Tag>{row.status}</Tag> },
     {
-      title: 'Source',
+      title: t('record.type'),
+      dataIndex: 'type',
+      render: (_, row) => t('record.typeValue', { value: label(row.type) }),
+    },
+    {
+      title: t('record.status'),
+      dataIndex: 'status',
+      render: (_, row) => (
+        <Tag status={row.status}>{t('record.statusValue', { value: label(row.status) })}</Tag>
+      ),
+    },
+    {
+      title: t('record.source'),
       dataIndex: 'source',
-      render: (_, row) => (row.source ? sourceName(index.sources.get(row.source)!) : 'Scan-wide'),
+      render: (_, row) =>
+        row.source ? sourceTitle(index.sources.get(row.source)!) : t('record.scanWide'),
     },
   ];
+  if (renderRecordBefore)
+    columns.unshift({
+      title: t('record.before'),
+      dataIndex: 'before',
+      render: (_, row) => recordExtras(renderRecordBefore, row),
+    });
+  if (renderRecordAfter)
+    columns.push({
+      title: t('record.after'),
+      dataIndex: 'after',
+      render: (_, row) => recordExtras(renderRecordAfter, row),
+    });
   const source = row?.source ? index.sources.get(row.source) : undefined;
   const statusOptions = [...new Set(index.rows[filters.view].map((row) => row.status))];
 
   return (
-    <section className={`bh-viewer ${className}`} aria-label="Bloodhound manifest report">
+    <section className={`bh-viewer ${className}`} aria-label={t('viewer.label')}>
       <header className="bh-heading">
-        <strong>Manifest report</strong>
-        <Tag>{manifest.status}</Tag>
+        <strong>{t('viewer.title')}</strong>
+        <Tag status={manifest.status}>
+          {t('record.statusValue', { value: label(manifest.status) })}
+        </Tag>
         <span>
-          Scanner {manifest.scannerVersion} · {manifest.dependencyMode}
+          {t('viewer.scanner', {
+            version: manifest.scannerVersion,
+            mode: label(manifest.dependencyMode),
+          })}
         </span>
       </header>
-      <p className="bh-muted">
-        Static findings are candidates. Unresolved references and coverage gaps describe code the
-        scan could not fully analyze.
-      </p>
+      <p className="bh-muted">{t('viewer.disclaimer')}</p>
       {notices?.map((notice) => (
         <p role="status" key={notice}>
-          {notice}
+          {t('viewer.notice', { message: notice })}
         </p>
       ))}
-      <nav className="bh-controls" aria-label="Record categories">
+      <nav className="bh-controls bh-categories" aria-label={t('view.categories')}>
         {views.map((view) => (
           <Button
             key={view}
-            disabled={filters.view === view}
-            onClick={() => filter({ ...initialFilters, view })}
+            variant="toggle"
+            aria-pressed={filters.view === view}
+            onClick={() => {
+              if (filters.view !== view) filter({ ...initialFilters, view });
+            }}
           >
-            {view} ({index.rows[view].length})
+            {t('view.count', { name: t(`view.${view}`), count: index.rows[view].length })}
           </Button>
         ))}
       </nav>
-      <div className="bh-controls">
+      <div className="bh-controls bh-filters">
         <Input
           value={filters.query}
           onChange={(query) => filter({ query })}
-          placeholder="Search records, paths or code"
-          aria-label="Search records"
+          placeholder={t('filter.search')}
+          aria-label={t('filter.searchLabel')}
         />
         <Select
           value={filters.severity}
           onChange={(severity) => filter({ severity, group: null })}
-          aria-label="Status"
+          aria-label={t('filter.status')}
           options={[
-            { label: 'All statuses', value: '' },
-            ...statusOptions.map((value) => ({ label: value, value })),
+            { label: t('filter.allStatuses'), value: '' },
+            ...statusOptions.map((value) => ({
+              label: t('record.statusValue', { value: label(value) }),
+              value,
+            })),
           ]}
         />
         {filters.view === 'findings' ? (
           <Select
             value={filters.confidence}
             onChange={(confidence) => filter({ confidence, group: null })}
-            aria-label="Confidence"
+            aria-label={t('filter.confidence')}
             options={[
-              { label: 'All confidence levels', value: '' },
-              { label: 'High', value: 'high' },
-              { label: 'Medium', value: 'medium' },
+              { label: t('filter.allConfidence'), value: '' },
+              { label: t('filter.high'), value: 'high' },
+              { label: t('filter.medium'), value: 'medium' },
             ]}
           />
         ) : null}
         <Select
           value={filters.grouping}
           onChange={(value) => filter({ grouping: value as Grouping, group: null })}
-          aria-label="Group by"
-          options={groupings.map((value) => ({ label: `By ${value}`, value }))}
+          aria-label={t('filter.groupBy')}
+          options={groupings.map((value) => ({ label: t(`group.${value}`), value }))}
         />
       </div>
-      <div className="bh-layout">
-        <aside className="bh-groups" aria-label="Record groups">
-          <Button disabled={filters.group === null} onClick={() => filter({ group: null })}>
-            All ({baseRows.length})
-          </Button>
-          {groups.map((group) => (
+      <ViewerLayout
+        selected={selected}
+        groups={
+          <>
             <Button
-              key={group.id}
-              disabled={filters.group === group.id}
-              onClick={() => filter({ group: group.id })}
+              variant="toggle"
+              aria-pressed={filters.group === null}
+              onClick={() => {
+                if (filters.group !== null) filter({ group: null });
+              }}
             >
-              {group.name} ({group.count})
+              {t('group.all', { count: baseRows.length })}
             </Button>
-          ))}
-          {filters.grouping === 'source' ? (
-            <Button onClick={() => filter({ includeDependencies: !filters.includeDependencies })}>
-              {filters.includeDependencies ? 'Exclude dependencies' : 'Include dependencies'}
-            </Button>
-          ) : null}
-        </aside>
-        <div className="bh-results">
-          <div className="bh-table-scroll">
-            <Table
-              columns={columns}
-              data={rows.slice(activePage * size, (activePage + 1) * size)}
-              rowKey="id"
-              pagination={false}
-            />
-          </div>
-          {rows.length === 0 ? <p role="status">No matching records.</p> : null}
-          <div className="bh-controls" aria-label="Pagination">
-            <Button disabled={activePage === 0} onClick={() => setPage(activePage - 1)}>
-              Previous
-            </Button>
-            <span>
-              {activePage + 1} / {pages} · {rows.length} records
-            </span>
-            <Button disabled={activePage + 1 >= pages} onClick={() => setPage(activePage + 1)}>
-              Next
-            </Button>
-          </div>
-          {row ? (
-            <section className="bh-detail" aria-label="Record details">
+            {groups.map((group) => (
+              <Button
+                key={group.id}
+                title={t('group.name', { name: groupTitle(group) })}
+                variant="toggle"
+                aria-pressed={filters.group === group.id}
+                onClick={() => {
+                  if (filters.group !== group.id) filter({ group: group.id });
+                }}
+              >
+                {t('view.count', {
+                  name: t('group.name', { name: groupTitle(group) }),
+                  count: group.count,
+                })}
+              </Button>
+            ))}
+            {filters.grouping === 'source' ? (
+              <Button
+                variant="toggle"
+                aria-pressed={filters.includeDependencies}
+                onClick={() => filter({ includeDependencies: !filters.includeDependencies })}
+              >
+                {t('group.includeDependencies')}
+              </Button>
+            ) : null}
+          </>
+        }
+        results={
+          <>
+            <div className="bh-table-scroll">
+              <Table
+                columns={columns}
+                data={rows.slice(activePage * size, (activePage + 1) * size)}
+                rowKey="id"
+                pagination={false}
+                selectedRowId={selected}
+              />
+            </div>
+            {rows.length === 0 ? <p role="status">{t('record.empty')}</p> : null}
+            <div className="bh-controls" aria-label={t('pagination.label')}>
+              <Button disabled={activePage === 0} onClick={() => setPage(activePage - 1)}>
+                {t('pagination.previous')}
+              </Button>
+              <span>
+                {t('pagination.summary', { page: activePage + 1, pages, count: rows.length })}
+              </span>
+              <Button disabled={activePage + 1 >= pages} onClick={() => setPage(activePage + 1)}>
+                {t('pagination.next')}
+              </Button>
+            </div>
+          </>
+        }
+        detail={
+          row ? (
+            <section className="bh-detail">
               <div className="bh-heading">
-                <strong>{row.title}</strong>
-                <Button onClick={() => setSelected(undefined)}>Close details</Button>
+                <strong>{recordTitle(row)}</strong>
+                <Button variant="text" onClick={() => setSelected(undefined)}>
+                  {t('record.close')}
+                </Button>
               </div>
               <p>
-                {row.type} · {row.status}
-                {row.confidence ? ` · ${row.confidence} confidence` : ''}
+                {t('record.typeValue', { value: label(row.type) })} ·{' '}
+                {t('record.statusValue', { value: label(row.status) })}
+                {row.confidence
+                  ? ` · ${t('record.confidence', { value: label(row.confidence) })}`
+                  : ''}
               </p>
               {source ? <p className="bh-path">{source.file ?? source.url ?? source.id}</p> : null}
               {'location' in row.data && row.data.location ? (
                 <p>
-                  Line {row.data.location.line}, column {row.data.location.column}
+                  {t('record.position', {
+                    line: row.data.location.line,
+                    column: row.data.location.column,
+                  })}
                 </p>
               ) : null}
               {'detail' in row.data && row.data.detail ? <p>{row.data.detail}</p> : null}
               {'snippet' in row.data ? <pre className="bh-snippet">{row.data.snippet}</pre> : null}
               {source && source.chain.length > 0 ? (
-                <div className="bh-controls" aria-label="Entry chain">
-                  Entry chain:{' '}
+                <div className="bh-controls" aria-label={t('record.entryChain')}>
+                  {t('record.entryChain')}{' '}
                   {source.chain.map((id) => (
-                    <Button key={id} onClick={() => selectSource(id)}>
-                      {sourceName(index.sources.get(id)!)}
+                    <Button key={id} variant="link" onClick={() => selectSource(id)}>
+                      {sourceTitle(index.sources.get(id)!)}
                     </Button>
                   ))}
                 </div>
               ) : null}
               {source ? (
-                <div className="bh-controls" aria-label="Dependencies">
-                  Dependencies:{' '}
+                <div className="bh-controls" aria-label={t('record.dependencies')}>
+                  {t('record.dependencies')}{' '}
                   {[...(index.children.get(source.id) ?? [])].map((id) => (
-                    <Button key={id} onClick={() => selectSource(id)}>
-                      {sourceName(index.sources.get(id)!)}
+                    <Button key={id} variant="link" onClick={() => selectSource(id)}>
+                      {sourceTitle(index.sources.get(id)!)}
                     </Button>
                   ))}
                 </div>
@@ -284,13 +417,13 @@ function ViewerSession({
                 customLoader={Boolean(loadText)}
               />
               <details>
-                <summary>Record JSON</summary>
+                <summary>{t('record.json')}</summary>
                 <pre className="bh-snippet">{JSON.stringify(row.data, null, 2)}</pre>
               </details>
             </section>
-          ) : null}
-        </div>
-      </div>
+          ) : null
+        }
+      />
     </section>
   );
 }

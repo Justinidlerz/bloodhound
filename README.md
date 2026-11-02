@@ -66,6 +66,7 @@ Strings always mean source text. File paths and URLs use explicit source objects
 | `style-injection`      | injected `<style>` or stylesheet `<link>`, adopted stylesheets                  | warning          |
 | `document-style-write` | `document.body.style.overflow = …`                                              | warning          |
 | `global-listener`      | `window.addEventListener(…)`, document listeners                                | warning          |
+| `module-state-write`   | functions/callbacks writing ESM module variables or their properties            | warning          |
 | `html-global-style`    | `<html style="…">`, `<body style="…">`                                          | info             |
 
 Ordinary element `style=` attributes in SSR markup are not findings. Expected browser state changes such as `document.title`, `document.cookie`, and navigation are excluded. A severity label is a default consumer policy, not proof that code is harmful.
@@ -73,6 +74,24 @@ Ordinary element `style=` attributes in SSR markup are not findings. Expected br
 An inserted node is suppressed when it is removed later in the same straight-line block, or inside a returned cleanup function. A listener is suppressed when the same file contains a removal with the same event and handler reference. Conditions, source order, receiver and capture do not affect listener pairing. Handler aliases and arguments passed to local helpers are resolved; matching an event alone is insufficient. Inline anonymous callbacks remain outside the listener rule, and `once`/`signal` options count as their own removal mechanisms. Pairing does not prove that teardown executes.
 
 The scan follows scripts belonging to the current document. Iframe and `srcdoc` references are listed as `not-followed / iframe-isolated-global`; their child documents and scripts are not loaded or analyzed. SVG/MathML contents are skipped with a coverage gap, and ordinary HTML after a self-closing foreign element remains eligible for scanning.
+
+### ESM module state
+
+ESM module initialization runs once per module instance. Reusing the same module in a document does not reset its variables when a page or component mounts again. `module-state-write` records assignments, updates, destructuring, and property writes/deletes from functions or callbacks to module-level variables:
+
+```jsx
+let ready = false;
+export const App = () => {
+  useEffect(() => {
+    ready = true; // module-state-write, warning
+  }, []);
+  return ready ? <Page /> : <Loading />;
+};
+```
+
+Use `scriptMode: 'module'` for JavaScript/JSX source. The plugin derives this mode from ESM output; HTML uses `<script type="module">`. Findings point to the write and retain the existing source-map preview support. Read-only declarations, writes during module evaluation/direct initialization IIFEs, imported bindings, and function-local or shadowed variables are excluded. Classic scripts retain their existing rules.
+
+This warning identifies persistent state, not a proven lifecycle bug. A separate reset function does not suppress it because static scanning does not establish that every page entry or teardown calls that function. Writes through aliases, opaque helper calls, collection methods, and state enclosed by module-initialization factories are not inferred by this rule. Keep per-instance state inside the component/page instance, or explicitly reset shared state in its lifecycle.
 
 ## Manifest v2
 

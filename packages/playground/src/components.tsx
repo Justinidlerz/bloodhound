@@ -1,13 +1,17 @@
 import type { JSXElementConstructor, CSSProperties, ReactNode } from 'react';
 import { codeWindow, type Location, type RecordRow } from '@bloodhound-rs/manifest';
+import { useMessages } from './messages.js';
 
 interface ControlProps {
+  title?: string;
   className?: string;
   style?: CSSProperties;
   'aria-label'?: string;
   disabled?: boolean;
 }
 export interface ButtonProps extends ControlProps {
+  variant?: 'action' | 'toggle' | 'link' | 'text';
+  'aria-pressed'?: boolean;
   children?: ReactNode;
   onClick?: () => void;
 }
@@ -23,6 +27,7 @@ export interface SelectProps extends ControlProps {
 }
 export interface TagProps {
   children?: ReactNode;
+  status?: string;
 }
 export interface TableColumn {
   title: string;
@@ -34,6 +39,7 @@ export interface TableProps {
   columns: TableColumn[];
   rowKey: 'id';
   pagination: false;
+  selectedRowId?: string;
 }
 export interface SourceCodeProps {
   text: string;
@@ -52,8 +58,10 @@ export interface ManifestComponents {
   SourceCode: JSXElementConstructor<SourceCodeProps>;
 }
 
-function Button(props: ButtonProps) {
-  return <button type="button" {...props} />;
+function Button({ variant = 'action', className = '', ...props }: ButtonProps) {
+  return (
+    <button type="button" className={`bh-button ${className}`} data-variant={variant} {...props} />
+  );
 }
 function Input({ onChange, ...props }: InputProps) {
   return <input {...props} onChange={(event) => onChange(event.target.value)} />;
@@ -69,10 +77,14 @@ function Select({ options, onChange, ...props }: SelectProps) {
     </select>
   );
 }
-function Tag({ children }: TagProps) {
-  return <span className="bh-tag">{children}</span>;
+function Tag({ children, status }: TagProps) {
+  return (
+    <span className="bh-tag" data-status={status}>
+      {children}
+    </span>
+  );
 }
-function Table({ columns, data }: TableProps) {
+function Table({ columns, data, selectedRowId }: TableProps) {
   return (
     <table className="bh-table">
       <thead>
@@ -86,7 +98,7 @@ function Table({ columns, data }: TableProps) {
       </thead>
       <tbody>
         {data.map((row) => (
-          <tr key={row.id}>
+          <tr key={row.id} aria-selected={row.id === selectedRowId}>
             {columns.map((column) => (
               <td key={column.dataIndex}>{column.render(undefined, row)}</td>
             ))}
@@ -97,12 +109,11 @@ function Table({ columns, data }: TableProps) {
   );
 }
 function SourceCode({ text, location }: SourceCodeProps) {
+  const { text: t } = useMessages();
   const view = codeWindow(text, location, 25);
   return (
     <div className="bh-code">
-      <small>
-        Lines {view.from}–{view.to} of {view.total}
-      </small>
+      <small>{t('source.lines', { from: view.from, to: view.to, total: view.total })}</small>
       <pre>
         {view.lines.map((line) => (
           <div key={line.number} data-highlight={line.inRange || undefined}>

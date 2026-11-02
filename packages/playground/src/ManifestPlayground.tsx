@@ -5,6 +5,7 @@ import {
   type ManifestSelectorProps,
 } from './ManifestSelector.js';
 import { ManifestViewer, type ManifestViewerProps } from './ManifestViewer.js';
+import { englishMessages } from './locales/en.js';
 
 export interface ManifestPlaygroundProps
   extends Omit<ManifestViewerProps, 'manifest' | 'manifestUrl' | 'notices'> {
@@ -18,6 +19,7 @@ export function ManifestPlayground({
   initialResource,
   onChange,
   selectorProps,
+  messages = englishMessages,
   ...viewerProps
 }: ManifestPlaygroundProps) {
   const [resource, setResource] = useState(initialResource);
@@ -26,6 +28,7 @@ export function ManifestPlayground({
       <ManifestSelector
         {...selectorProps}
         components={viewerProps.components}
+        messages={messages}
         onChange={(resource) => {
           setResource(resource);
           onChange?.(resource);
@@ -34,6 +37,7 @@ export function ManifestPlayground({
       {resource ? (
         <ManifestViewer
           {...viewerProps}
+          messages={messages}
           manifest={resource.manifest}
           manifestUrl={resource.url}
           notices={resource.notices}

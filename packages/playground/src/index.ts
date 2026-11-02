@@ -1,4 +1,15 @@
-export { ManifestViewer, type ManifestViewerProps } from './ManifestViewer.js';
+export {
+  ManifestViewer,
+  type ManifestViewerProps,
+  type RecordRenderer,
+  type RecordRenderContext,
+} from './ManifestViewer.js';
+export { englishMessages } from './locales/en.js';
+export type {
+  PlaygroundMessages,
+  PlaygroundMessageKey,
+  PlaygroundMessageParams,
+} from './messages.js';
 export { ManifestPlayground, type ManifestPlaygroundProps } from './ManifestPlayground.js';
 export {
   ManifestSelector,

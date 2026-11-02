@@ -19,6 +19,7 @@
 
 mod builtins;
 mod eval;
+mod module_state;
 mod rules;
 mod values;
 mod visitor;
@@ -56,7 +57,7 @@ pub const PARSER_VERSION: &str = "oxc-0.154.0";
 pub fn analyze(source: &str, options: &JsOptions, cancel: &Cancellation) -> Analysis {
     let allocator = Allocator::default();
     let source_type = match options.script_mode {
-        ScriptMode::Module => SourceType::mjs(),
+        ScriptMode::Module => SourceType::mjs().with_jsx(true),
         ScriptMode::Classic => SourceType::cjs().with_script(true),
     };
     let parsed = Parser::new(&allocator, source, source_type).parse();
@@ -186,6 +187,8 @@ pub(crate) struct Analyzer<'s, 'c> {
     /// Owner binding for a function literal currently being visited as a
     /// variable initializer or assignment value.
     pending_owner: Vec<Option<SymbolId>>,
+    /// Enclosing write expression for module-state target locations.
+    write_context: Option<(Span, &'static str)>,
     conditional_depth: usize,
     dependencies: Vec<Dependency>,
     gaps: Vec<Gap>,
@@ -224,6 +227,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             fn_calls: vec![],
             fn_stack: vec![],
             pending_owner: vec![],
+            write_context: None,
             conditional_depth: 0,
             dependencies: vec![],
             gaps: vec![],

@@ -62,7 +62,7 @@ The same plugin instance is valid in all three bundlers. Scanning uses `generate
 | `scanOptions`      | `{ sourceMaps: true, access: { protocols: [] } }` | Extra `ScanOptions`; set `access` to allow fetching already deployed shared resources.                             |
 | `manifestFileName` | `bloodhound.manifest.json`                        | Default output filename when no callback is configured; `false` disables it. Also the base for relative map URLs.  |
 | `globals`          | `warn`                                            | `off`, `warn`, or `error` for global declarations, writes, definitions, and deletes.                               |
-| `findings`         | `warn`                                            | Severity for DOM insertions, style injections and global listeners.                                                |
+| `findings`         | `warn`                                            | Severity for DOM insertions, style injections, global listeners and ESM module-state writes.                       |
 | `rules`            | `{}`                                              | Per-rule severity overrides, e.g. `{ 'host-api-override': 'error' }`.                                              |
 | `coverage`         | `warn`                                            | Severity when the scan is `partial` or `failed`.                                                                   |
 | `allowGlobals`     | `[]`                                              | Expected global paths: exact strings, `prefix.*`, `*` wildcards, or RegExp.                                        |
@@ -73,6 +73,8 @@ The same plugin instance is valid in all three bundlers. Scanning uses `generate
 `diagnosticsFromManifest(manifest, options, fileNames)` is exported for post-processing a saved manifest with the same filters.
 
 Diagnostics expose the canonical rule and target (`global-write`, `window.sharedConfig`). `allowGlobals` accepts canonical paths and the shorthand `sharedConfig`. The manifest retains all findings even when warning filters suppress some diagnostics. Plugin severity defaults to warnings; use `rules` or category options to enforce your release policy independently of the SDK's severity labels.
+
+ESM output also reports `module-state-write` when functions or callbacks assign module-level variables or mutate their properties. These values survive page remounts because cached module initialization does not rerun. The diagnostic points to the write, and source maps can resolve its original source. Configure it with `rules: { 'module-state-write': 'warn' }` (the default). A reset function alone does not suppress this warning; the scanner does not prove page lifecycle execution.
 
 ## Receive the manifest in a callback
 

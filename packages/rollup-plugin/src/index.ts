@@ -123,7 +123,7 @@ export interface BloodhoundPluginOptions {
   manifestFileName?: string | false;
   /** Severity for global declarations, writes, definitions, and deletes. Default: `warn`. */
   globals?: Severity;
-  /** Severity for DOM and CSS findings. Default: `warn`. */
+  /** Severity for DOM, CSS, listener and module-state findings. Default: `warn`. */
   findings?: Severity;
   /** Per-rule overrides, applied before the globals/findings category defaults. */
   rules?: Partial<Record<Rule, Severity>>;

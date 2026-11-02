@@ -63,7 +63,73 @@ Ant Design's `Input.onChange` receives an event, while the viewer expects a stri
 
 Bloodhound does not depend on a UI library or inject a theme provider. Its CSS only styles the viewer's layout, default table and code excerpt, under `bh-` classes. Existing providers and component themes remain owned by the host.
 
+Button adapters receive `variant` (`action`, `toggle`, `link`, or `text`), `aria-pressed` for selection, and `disabled` only when an action is unavailable. Tags receive the report's machine-readable `status`; tables receive `selectedRowId`. These optional props let hosts apply their own button hierarchy, status colors and selected-row styles without inspecting labels or DOM position.
+
 Components with different props use a small adapter. `Input.onChange` and `Select.onChange` receive a string. `Table` receives `data`, `columns`, `rowKey="id"` and `pagination={false}`. Missing slots use native HTML controls.
+
+## Record markers and actions
+
+`renderRecordBefore` and `renderRecordAfter` add the first and last table columns. Both receive `(row, context)` and return any React node, including tags, icons, checkboxes and buttons. Return `null` for records that need no extra content. Without these props, no extra columns are added.
+
+```tsx
+import { ManifestViewer, type RecordRenderer } from '@bloodhound-rs/playground';
+
+const actionMessages = {
+  selected: 'Selected',
+  needsReview: 'Needs review',
+  markReviewed: 'Mark reviewed',
+};
+const renderMarker: RecordRenderer = (row, { selected, components: { Tag } }) =>
+  row.view === 'findings' ? (
+    <Tag>{selected ? actionMessages.selected : actionMessages.needsReview}</Tag>
+  ) : null;
+
+const renderActions: RecordRenderer = (row, { openDetails, components: { Button }, messages }) => (
+  <>
+    <Button onClick={() => reviewService.markReviewed(row)}>{actionMessages.markReviewed}</Button>
+    <Button onClick={openDetails}>{messages['layout.details']}</Button>
+  </>
+);
+
+<ManifestViewer
+  manifest={manifest}
+  components={components}
+  renderRecordBefore={renderMarker}
+  renderRecordAfter={renderActions}
+/>;
+```
+
+`reviewService` belongs to the host. Render callbacks run only for visible rows and must remain pure; put mutations in event handlers. Hosts own action state and persistence. Clicking the extra content does not bubble into table-row selection; call `openDetails()` explicitly when needed. The context includes `selected`, the resolved `components`, and the resolved `messages` dictionary. Use a build/report identifier together with `row.id` when persisting annotations, since row IDs belong to one report.
+
+## Messages
+
+All default English UI copy is defined in `src/locales/en.ts` and exported as `englishMessages`. `ManifestViewer`, `ManifestSelector` and `ManifestPlayground` default their `messages` parameter to this object. Supply a plain key/value object to override messages; omitted keys use the English catalog. No translation function or global locale setup is required.
+
+```tsx
+import {
+  ManifestViewer,
+  englishMessages,
+  type PlaygroundMessages,
+} from '@bloodhound-rs/playground';
+
+const messages: Partial<PlaygroundMessages> = {
+  'viewer.title': '扫描报告',
+  'record.before': '标记',
+  'record.after': '操作',
+  'pagination.previous': '上一页',
+  'pagination.next': '下一页',
+  'pagination.summary': '第 {page} / {pages} 页，共 {count} 条记录',
+  'value.warning': '警告',
+  'value.module-state-write': '模块状态写入',
+};
+
+<ManifestViewer manifest={manifest} messages={messages} />;
+// Copy englishMessages to create a complete translation catalog.
+```
+
+Values are strings. Keep the `{name}` placeholders used by a message; interpolation is handled by the component. Keys cover headings, filters, categories, pagination, empty/loading states, file selection, source preview, splitter accessibility labels, and standard status/type labels. Changing `messages` on rerender updates labels without resetting the selected record, filters or loaded source. Viewer instances keep their dictionaries separate; the composed Playground forwards the same dictionary to its selector and viewer.
+
+Labels do not change rule IDs, filter values, paths, snippets, record JSON or host callbacks. Manifest diagnostics and loader/server errors remain data; `viewer.notice`, `selector.error` and `source.error` provide message wrappers. Custom action text and custom UI components remain owned by the host.
 
 ## Source loading
 
@@ -123,6 +189,8 @@ export function Playground() {
 `ManifestSelector.loadManifest(url)` replaces URL fetching. `parse(text)` accepts a synchronous or asynchronous parser, including a host-managed worker. `maxBytes` defaults to 64 MiB. Local files remain in the browser; URL resources follow the browser's CORS rules unless the host supplies a loader.
 
 `ManifestViewer` additionally accepts `pageSize` (default 50), `className`, and `onSelect(row)`. Its four record categories are findings, sources, dependencies and gaps. Keep `manifest`, `workspace` and `loadText` references stable while displaying the same build. Replacing any resource context resets selection, filters, map links and pending preview state. Independent viewer instances do not share state.
+
+Groups, records and details occupy independently scrolling columns. Drag either divider to resize it, or focus a divider and use the arrow keys (Shift for larger steps), Home or End. Double-click a divider to reset both widths. Widths are scoped to the viewer and clamped when its container resizes. Set `--bh-layout-height` on the viewer to override the default `65vh` height (minimum `360px`). In containers at most `800px` wide, selecting a record opens details over the list; **Close details** returns to the list.
 
 ## Local development
 
