@@ -104,6 +104,14 @@ export function parseManifest(text: string): { manifest: Manifest; notices: stri
       strings(r.referrers) &&
       strings(r.chain) &&
       (r.url === undefined || string(r.url)) &&
+      (r.file === undefined || string(r.file)) &&
+      (r.sourceMap === undefined ||
+        (object(r.sourceMap) &&
+          string(r.sourceMap.url) &&
+          (r.sourceMap.file === undefined || string(r.sourceMap.file)) &&
+          (r.sourceMap.sourcePaths === undefined ||
+            (Array.isArray(r.sourceMap.sourcePaths) &&
+              r.sourceMap.sourcePaths.every((path) => path === null || string(path)))))) &&
       (r.inline === undefined ||
         (object(r.inline) &&
           string(r.inline.parent) &&

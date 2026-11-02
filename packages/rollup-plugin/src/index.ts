@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { scan } from '@bloodhound-rs/core';
+import { attachSourceMaps } from './source-maps.js';
 import type {
   Manifest,
   Location,
@@ -69,6 +70,8 @@ export interface BloodhoundPlugin {
   apply: 'build';
   /** Vite-only: run after Vite's own output plugins. Rollup and Rolldown ignore it. */
   enforce: 'post';
+  /** Vite supplies its project root; other bundlers use the explicit root or working directory. */
+  configResolved(config: { root: string }): void;
   generateBundle: {
     order: 'post';
     handler(
@@ -99,6 +102,8 @@ export interface Diagnostic {
 }
 
 export interface BloodhoundPluginOptions {
+  /** Root used for project-relative source preview paths. Default: Vite root or process.cwd(). */
+  root?: string;
   /**
    * Base URL used to address emitted files during the scan. Relative values such as `/assets/`
    * are resolved against `https://bundle.local/`. Use the same value as Vite `base` or the
@@ -111,7 +116,10 @@ export interface BloodhoundPluginOptions {
   scriptMode?: ScriptMode;
   /** Additional scanner options. In-memory bundle mappings are managed by the plugin. */
   scanOptions?: Omit<ScanOptions, 'resourceMappings'>;
-  /** Manifest asset emitted next to the bundle. `false` disables it. Default: `bloodhound.manifest.json`. */
+  /**
+   * Manifest asset emitted when onManifest is absent. `false` disables it.
+   * Default: `bloodhound.manifest.json`. Also the base for relative source-map URLs.
+   */
   manifestFileName?: string | false;
   /** Severity for global declarations, writes, definitions, and deletes. Default: `warn`. */
   globals?: Severity;
@@ -127,7 +135,11 @@ export interface BloodhoundPluginOptions {
   ignoreSources?: (string | RegExp)[];
   /** Final predicate applied after the built-in filters. Return `false` to drop a diagnostic. */
   filter?: (diagnostic: Diagnostic) => boolean;
-  /** Receives the manifest and the derived diagnostics after each scan. */
+  /**
+   * Takes ownership of the manifest instead of emitting a manifest asset. Awaited after
+   * each scan, including when manifestFileName is false. Callback errors fail the build;
+   * blocking diagnostics are reported after the callback.
+   */
   onManifest?: (
     manifest: Manifest,
     context: { diagnostics: Diagnostic[]; bundle: Bundle; outputOptions: BundleOutputOptions },
@@ -357,6 +369,7 @@ function report(
 }
 
 export function bloodhound(options: BloodhoundPluginOptions = {}): BloodhoundPlugin {
+  let root = resolvePath(options.root ?? process.cwd());
   const manifestFileName = options.manifestFileName ?? 'bloodhound.manifest.json';
   const severity = {
     globals: options.globals ?? 'warn',
@@ -367,6 +380,9 @@ export function bloodhound(options: BloodhoundPluginOptions = {}): BloodhoundPlu
     name: 'bloodhound',
     apply: 'build',
     enforce: 'post',
+    configResolved(config) {
+      if (!options.root) root = resolvePath(config.root);
+    },
     generateBundle: {
       // Run after other plugins so HTML and assets they emit are part of the scan.
       order: 'post',
@@ -390,15 +406,26 @@ export function bloodhound(options: BloodhoundPluginOptions = {}): BloodhoundPlu
           resourceMappings,
         } satisfies ScanOptions;
         const manifest: Manifest = await scan(entries, scanOptions);
-        const diagnostics = diagnosticsFromManifest(manifest, options, fileNamesOf(manifest, urls));
-        if (manifestFileName) {
+        const fileNames = fileNamesOf(manifest, urls);
+        attachSourceMaps(
+          manifest,
+          bundle,
+          outputOptions,
+          fileNames,
+          root,
+          manifestFileName || 'bloodhound.manifest.json',
+          this,
+        );
+        const diagnostics = diagnosticsFromManifest(manifest, options, fileNames);
+        if (options.onManifest) {
+          await options.onManifest(manifest, { diagnostics, bundle, outputOptions });
+        } else if (manifestFileName) {
           this.emitFile({
             type: 'asset',
             fileName: manifestFileName,
             source: JSON.stringify(manifest, null, 2) + '\n',
           });
         }
-        await options.onManifest?.(manifest, { diagnostics, bundle, outputOptions });
         const failures = report(this, diagnostics, outputOptions, severity, options.rules);
         if (manifest.status !== 'completed' && severity.coverage !== 'off') {
           const gaps = manifest.gaps

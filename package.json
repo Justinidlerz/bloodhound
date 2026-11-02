@@ -52,6 +52,7 @@
   "devDependencies": {
     "@bloodhound-rs/rollup-plugin": "workspace:*",
     "@changesets/cli": "3.0.3",
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@napi-rs/cli": "3.10.8",
     "@types/node": "^22.19.0",
     "prettier": "3.6.2",

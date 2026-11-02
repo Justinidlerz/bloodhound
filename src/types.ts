@@ -176,12 +176,25 @@ export interface Location {
   original?: { source: string; line: number; column: number; name?: string };
 }
 
+/** Optional bundler/consumer association. URLs are relative to the manifest unless absolute. */
+export interface SourceMapReference {
+  url: string;
+  /** Map file relative to the project root, for local previews. */
+  file?: string;
+  /** Project-relative paths in the flattened map's source order; null for external/virtual files. */
+  sourcePaths?: (string | null)[];
+}
+
 export interface ManifestSource {
   /** Manifest-local id such as `s1`. */
   id: string;
   kind: ResourceKind;
   /** Logical URL. Absent for anonymous inline content. */
   url?: string;
+  /** Emitted file relative to the project root, supplied by the bundler plugin. */
+  file?: string;
+  /** Source map used to preview original code. Absent when no map is associated. */
+  sourceMap?: SourceMapReference;
   /** Present for inline scripts extracted from an HTML parent. */
   inline?: { parent: string; line: number; column: number };
   scriptMode?: ScriptMode;

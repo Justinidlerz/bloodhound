@@ -910,6 +910,39 @@ select {
   color: #7d8997;
   font-weight: 550;
 }
+
+.source-map-link {
+  margin-top: 16px;
+  font-size: 12px;
+}
+.source-map-link summary {
+  cursor: pointer;
+}
+.source-map-link label {
+  display: block;
+  margin: 12px 0 6px;
+}
+.source-map-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.source-map-input-row input {
+  min-width: 0;
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.original-source {
+  border-top: 1px solid var(--border);
+  margin-top: 18px;
+  padding-top: 4px;
+}
+.original-source .url {
+  overflow-wrap: anywhere;
+}
 .detail-section > p {
   font-size: 11px;
   line-height: 1.7;

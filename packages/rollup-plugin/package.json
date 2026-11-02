@@ -25,7 +25,8 @@
     "test": "node --test tests/plugin.test.mjs"
   },
   "dependencies": {
-    "@bloodhound-rs/core": "workspace:*"
+    "@bloodhound-rs/core": "workspace:*",
+    "@jridgewell/trace-mapping": "^0.3.31"
   },
   "peerDependencies": {
     "rolldown": ">=1.0.0",

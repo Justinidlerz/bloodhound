@@ -1,5 +1,6 @@
 import { safeUrl } from './format.js';
 import type { Location, ManifestIndex, ManifestSource, RecordRow } from './manifest.js';
+import { projectFileUrl, type ProjectWorkspace } from './original-sources.js';
 
 /** State of one on-demand source fetch, keyed by URL in the app. */
 export interface SourceText {
@@ -23,6 +24,7 @@ export interface ViewerTarget {
   source: ManifestSource;
   url: string;
   location?: Location;
+  label?: string;
 }
 
 /**
@@ -30,22 +32,31 @@ export interface ViewerTarget {
  * position. Records without an HTTP(S) file cannot be fetched and keep the
  * manifest snippet as their only excerpt.
  */
-export function viewerTarget(index: ManifestIndex, row: RecordRow): ViewerTarget | undefined {
+export function viewerTarget(
+  index: ManifestIndex,
+  row: RecordRow,
+  workspace?: ProjectWorkspace,
+): ViewerTarget | undefined {
+  const fileUrl = (source: ManifestSource) =>
+    projectFileUrl(
+      workspace,
+      source.file ?? (source.url?.startsWith('file:') ? source.url : undefined),
+    ) ?? safeUrl(source.url);
   const source = row.source ? index.sources.get(row.source) : undefined;
   if (!source) return undefined;
   const location = 'location' in row.data ? row.data.location : undefined;
   if (location) {
     const parent = index.parentLocation(source.id, location);
     if (parent) {
-      const url = safeUrl(parent.source.url);
+      const url = fileUrl(parent.source);
       return url ? { source: parent.source, url, location: parent.location } : undefined;
     }
   }
-  const url = safeUrl(source.url);
+  const url = fileUrl(source);
   if (url) return { source, url, location };
   if (source.inline) {
     const parent = index.sources.get(source.inline.parent);
-    const parentUrl = parent && safeUrl(parent.url);
+    const parentUrl = parent && fileUrl(parent);
     if (parent && parentUrl) {
       const at = {
         line: source.inline.line,
@@ -124,9 +135,10 @@ export function codeWindow(
 ): CodeWindow {
   const all = text.split('\n');
   const total = all.length;
-  const from = location ? Math.max(1, location.line - radius) : 1;
+  const startLine = location ? Math.max(1, Math.min(total, location.line)) : 1;
+  const from = location ? Math.max(1, startLine - radius) : 1;
   const to = location
-    ? Math.min(total, location.endLine + radius)
+    ? Math.min(total, Math.max(startLine, location.endLine) + radius)
     : Math.min(total, radius * 2 + 1);
   const lines: ViewLine[] = [];
   for (let n = from; n <= to; n++) lines.push(viewLine(n, all[n - 1] ?? '', location));
