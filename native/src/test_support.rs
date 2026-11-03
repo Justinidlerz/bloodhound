@@ -82,9 +82,15 @@ pub fn rules(m: &Manifest) -> Vec<Rule> {
     m.findings.iter().map(|f| f.rule).collect()
 }
 
-/// Targets of all findings in a manifest.
+/// Targets of all operations, including those in grouped findings.
 pub fn targets(m: &Manifest) -> Vec<&str> {
-    m.findings.iter().map(|f| f.target.as_str()).collect()
+    m.findings
+        .iter()
+        .flat_map(|f| {
+            std::iter::once(f.target.as_str())
+                .chain(f.writes.iter().skip(1).map(|write| write.target.as_str()))
+        })
+        .collect()
 }
 
 pub fn has_gap(m: &Manifest, reason: &str) -> bool {
