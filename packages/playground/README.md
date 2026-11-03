@@ -2,6 +2,10 @@
 
 React 18/19 components for Manifest v2. The viewer and resource selector are independent exports. Neither depends on the scanner's native binary or an application router.
 
+Module-state records with `declaration` metadata show both the write and variable definition positions. Select either position to preview generated code or the original source, using the same UI adapters, text loader and message overrides.
+
+Grouped records with a `writes` array appear once, with a count and a position button for each operation. Module-state records use their declaration name; other rules group operations on the same original source line and display the first target. Each position shows its own target, snippet and detail, with generated-code and original-source previews. Module-state records also link to their shared declaration. Older manifests without `writes` retain their single-position display.
+
 | Export               | Responsibility                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------ |
 | `ManifestViewer`     | Render an already loaded manifest, filter records, inspect dependencies and preview source |
@@ -130,6 +134,12 @@ const messages: Partial<PlaygroundMessages> = {
 Values are strings. Keep the `{name}` placeholders used by a message; interpolation is handled by the component. Keys cover headings, filters, categories, pagination, empty/loading states, file selection, source preview, splitter accessibility labels, and standard status/type labels. Changing `messages` on rerender updates labels without resetting the selected record, filters or loaded source. Viewer instances keep their dictionaries separate; the composed Playground forwards the same dictionary to its selector and viewer.
 
 Labels do not change rule IDs, filter values, paths, snippets, record JSON or host callbacks. Manifest diagnostics and loader/server errors remain data; `viewer.notice`, `selector.error` and `source.error` provide message wrappers. Custom action text and custom UI components remain owned by the host.
+
+## Polyfill visibility
+
+Records identified by the scanner as polyfills are hidden from the findings list by default, regardless of API type or browser targets. The banner shows the hidden count and a toggle restores the original records. Category counts, search, grouping and pagination follow the toggle; the manifest's original findings and summary remain intact.
+
+The `polyfill` metadata records the missing-API check that guards installation, including related API bundles such as fetch, Request, Response and Headers. Unconditional overrides, monitoring wrappers and older manifests without polyfill metadata remain visible. Customize this copy through the `polyfill.*` message keys. Headless consumers can set `Filters.includePolyfills: true` when calling `ManifestIndex.baseRows`.
 
 ## Source loading
 

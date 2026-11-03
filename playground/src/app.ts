@@ -8,8 +8,15 @@ import {
 } from './manifest.js';
 import { badge, bytes, count, html, human, time } from './format.js';
 import { groupList, inspector, recordList } from './views.js';
-import { DEFAULT_RADIUS, viewerTarget, type SourceText, type Viewer } from './source-view.js';
+import {
+  DEFAULT_RADIUS,
+  viewerTarget,
+  writeRows,
+  type SourceText,
+  type Viewer,
+} from './source-view.js';
 import { resolveManifestParam } from './autoload.js';
+import { englishMessages } from '@bloodhound-rs/playground';
 import {
   fetchText,
   OriginalSources,
@@ -30,6 +37,7 @@ const initialFilters = (): Filters => ({
   grouping: 'type',
   group: null,
   includeDependencies: false,
+  includePolyfills: false,
 });
 const maxBytes = 64 * 1024 * 1024;
 let index: ManifestIndex | undefined;
@@ -140,7 +148,8 @@ function syncViewer(row: RecordRow | undefined) {
 /** Centers the highlighted range inside the code viewer after a render. */
 function scrollCode() {
   if (!viewer && !originalView.open) return;
-  const key = `${selected}|${viewer?.url}|${viewer?.radius}|${viewer?.wrap}|${originalView.radius}|${originalView.wrap}|${originals.previews.get(selected ?? '')?.status}`;
+  const previewId = `${previewRow()?.id ?? ''}${originalView.declaration ? ':declaration' : ''}`;
+  const key = `${previewId}|${viewer?.url}|${viewer?.radius}|${viewer?.wrap}|${originalView.radius}|${originalView.wrap}|${originals.previews.get(previewId)?.status}`;
   if (key === codeScrollKey) return;
   const view = element('inspector').querySelector<HTMLElement>(
     originalView.open ? '.original-source .code-view' : '.code-view',
@@ -179,8 +188,13 @@ async function fetchSource(url: string) {
   render();
 }
 
-function previewOriginal(retry = false) {
+function previewRow() {
   const row = selected ? index?.byId.get(selected) : undefined;
+  return row ? (writeRows(row)[originalView.write ?? 0] ?? row) : undefined;
+}
+
+function previewOriginal(retry = false) {
+  const row = previewRow();
   const source = row?.source ? index?.sources.get(row.source) : undefined;
   const location = row && 'location' in row.data ? row.data.location : undefined;
   if (!row || !source || !originals.reference(source) || !location) {
@@ -189,7 +203,13 @@ function previewOriginal(retry = false) {
   }
   originalView.open = true;
   const session = originals;
-  void session.preview(row.id, source, location, retry).then(() => {
+  const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
+  originalView.declaration = Boolean(originalView.declaration && declaration);
+  const pending =
+    originalView.declaration && declaration
+      ? session.previewDeclaration(row.id, source, location, declaration, retry)
+      : session.preview(row.id, source, location, retry);
+  void pending.then(() => {
     if (session === originals) render();
   });
 }
@@ -230,6 +250,19 @@ function render(updateDetails = true) {
     : undefined;
   const base = index.baseRows(filters);
   visibleRows = index.filter(base, filters);
+  element('count-findings').textContent = count(
+    index.rows.findings.length - (filters.includePolyfills ? 0 : index.polyfills.size),
+  );
+  element('polyfill-control').hidden = filters.view !== 'findings' || index.polyfills.size === 0;
+  element('polyfill-summary').textContent = englishMessages[
+    filters.includePolyfills ? 'polyfill.included' : 'polyfill.hidden'
+  ].replace('{count}', count(index.polyfills.size));
+  element('polyfill-toggle').textContent =
+    englishMessages[filters.includePolyfills ? 'polyfill.hide' : 'polyfill.show'];
+  element('polyfill-toggle').setAttribute(
+    'aria-pressed',
+    String(Boolean(filters.includePolyfills)),
+  );
   const pages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   page = Math.max(0, Math.min(page, pages - 1));
   if (selected && !visibleRows.some((row) => row.id === selected)) {
@@ -412,6 +445,7 @@ async function openFile(file: File, manifestUrl?: string) {
       sourceTexts.clear();
       originals = new OriginalSources(manifestUrl, workspace);
       originalView.open = false;
+      originalView.write = 0;
       originalView.radius = DEFAULT_RADIUS;
       codeScrollKey = '';
       selected = index.rows.findings[0]?.id ?? index.rows.sources[0]?.id ?? null;
@@ -446,6 +480,7 @@ async function openFile(file: File, manifestUrl?: string) {
 function selectRecord(id: string) {
   if (!index?.byId.has(id)) return;
   const changed = selected !== id;
+  if (changed) originalView.write = 0;
   selected = id;
   graphExpanded = false;
   syncViewer(index.byId.get(id));
@@ -486,12 +521,14 @@ function closeDetails() {
 }
 
 function navigate(view: View, source?: string, status = '') {
+  originalView.write = 0;
   filters = {
     ...initialFilters(),
     view,
     severity: status,
     grouping: source ? 'source' : filters.grouping,
     group: source ?? null,
+    includePolyfills: filters.includePolyfills,
   };
   groupQuery = '';
   page = 0;
@@ -591,7 +628,37 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (!index) return;
-  if (action === 'original-open' || action === 'original-retry') {
+  if (action === 'write-select') {
+    originalView.write = Number(button.dataset.write);
+    originalView.declaration = false;
+    originalView.radius = DEFAULT_RADIUS;
+    codeScrollKey = '';
+    const row = previewRow();
+    syncViewer(row);
+    previewOriginal();
+    if (!originalView.open && row) {
+      const target = viewerTarget(index, row, workspace);
+      if (target) {
+        viewer = {
+          sourceId: target.source.id,
+          url: target.url,
+          radius: DEFAULT_RADIUS,
+          wrap: false,
+        };
+        void fetchSource(target.url);
+      }
+    }
+    render();
+    return;
+  }
+  if (
+    action === 'original-open' ||
+    action === 'original-retry' ||
+    action === 'declaration-open' ||
+    action === 'write-open'
+  ) {
+    if (action === 'declaration-open' || action === 'write-open')
+      originalView.declaration = action === 'declaration-open';
     originalView.radius = DEFAULT_RADIUS;
     codeScrollKey = '';
     previewOriginal(action === 'original-retry');
@@ -627,6 +694,7 @@ document.addEventListener('click', (event) => {
       view: target.view,
       grouping: target.source ? 'source' : 'type',
       group: target.source ?? null,
+      includePolyfills: filters.includePolyfills || index.polyfills.has(target.id),
     };
     groupQuery = '';
     syncFilters();
@@ -637,7 +705,7 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (action === 'source-open' || action === 'source-retry') {
-    const row = selected ? index.byId.get(selected) : undefined;
+    const row = previewRow();
     const target = row && viewerTarget(index, row, workspace);
     if (!target) return;
     viewer = {
@@ -703,6 +771,12 @@ document.addEventListener('click', (event) => {
     page += action === 'previous-page' ? -1 : 1;
     render(false);
     element('record-list').scrollTop = 0;
+    return;
+  }
+  if (action === 'toggle-polyfills') {
+    filters.includePolyfills = !filters.includePolyfills;
+    page = 0;
+    render();
     return;
   }
   if (action === 'reset-filters') {

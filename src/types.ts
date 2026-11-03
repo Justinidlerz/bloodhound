@@ -99,7 +99,7 @@ export interface ScanOptions {
   /** Extra request headers keyed by `host[:port]`. */
   requestHeaders?: Record<string, Record<string, string>>;
   proxy?: string;
-  /** Decode `sourceMappingURL` comments and attach original locations. */
+  /** Decode source maps, attach original locations and verify module-state writes against embedded original sources. */
   sourceMaps?: boolean;
   /** Cancels a running scan. The result is a manifest with `status: 'cancelled'`. */
   signal?: AbortSignal;

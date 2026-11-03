@@ -327,6 +327,11 @@ fn work(
         loaded.final_url.clone()
     };
     loaded.final_url = url.clone();
+    let map = if options.source_maps && job.kind == Kind::Js {
+        loader::source_map(loader, &loaded.content, &loaded.final_url, cancel)
+    } else {
+        None
+    };
     let analysis = match job.kind {
         Kind::Html => html::extract(
             &loaded.content,
@@ -346,14 +351,9 @@ fn work(
                 max_steps: options.budgets.max_steps,
                 max_candidates: options.budgets.max_candidates,
             };
-            js::analyze(&loaded.content, &js_options, cancel)
+            js::analyze(&loaded.content, &js_options, cancel, map.as_ref())
         }
         Kind::Css => Analysis::default(),
-    };
-    let map = if options.source_maps && job.kind == Kind::Js {
-        loader::source_map(loader, &loaded.content, &loaded.final_url, cancel)
-    } else {
-        None
     };
     Ok((loaded, analysis, map))
 }

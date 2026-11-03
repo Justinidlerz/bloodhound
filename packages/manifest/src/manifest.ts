@@ -38,6 +38,8 @@ export interface Filters {
   grouping: Grouping;
   group: string | null;
   includeDependencies: boolean;
+  /** Include identified polyfills normally hidden from the findings view. */
+  includePolyfills?: boolean;
 }
 export interface Group {
   id: string;
@@ -52,6 +54,11 @@ const string = (value: unknown): value is string => typeof value === 'string';
 const number = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(string);
+const polyfill = (value: unknown): boolean =>
+  value === undefined ||
+  (object(value) &&
+    ['missing', 'not-function'].includes(String(value.guard)) &&
+    (value.guardTarget === undefined || string(value.guardTarget)));
 const position = (value: unknown): boolean =>
   object(value) &&
   ['line', 'column', 'endLine', 'endColumn'].every((field) => number(value[field])) &&
@@ -59,7 +66,9 @@ const position = (value: unknown): boolean =>
     (object(value.original) &&
       string(value.original.source) &&
       number(value.original.line) &&
-      number(value.original.column)));
+      number(value.original.column) &&
+      (value.original.endLine === undefined || number(value.original.endLine)) &&
+      (value.original.endColumn === undefined || number(value.original.endColumn))));
 
 /** Checks display inputs only. This viewer does not scan or execute source code. */
 export function parseManifest(text: string): { manifest: Manifest; notices: string[] } {
@@ -122,7 +131,22 @@ export function parseManifest(text: string): { manifest: Manifest; notices: stri
         string(r[k]),
       ) &&
       position(r.location) &&
-      (r.detail === undefined || string(r.detail)),
+      (r.declaration === undefined ||
+        (object(r.declaration) &&
+          string(r.declaration.name) &&
+          position(r.declaration.location))) &&
+      (r.writes === undefined ||
+        (Array.isArray(r.writes) &&
+          r.writes.every(
+            (write) =>
+              object(write) &&
+              ['target', 'operation', 'confidence', 'snippet'].every((key) => string(write[key])) &&
+              position(write.location) &&
+              (write.detail === undefined || string(write.detail)) &&
+              polyfill(write.polyfill),
+          ))) &&
+      (r.detail === undefined || string(r.detail)) &&
+      polyfill(r.polyfill),
     dependencies: (r) =>
       ['from', 'kind', 'status'].every((k) => string(r[k])) &&
       position(r.location) &&
@@ -218,6 +242,7 @@ export class ManifestIndex {
   readonly folders = new Map<string, string>();
   readonly entryReach = new Map<string, Set<string>>();
   readonly reached = new Set<string>();
+  readonly polyfills = new Set<string>();
 
   constructor(readonly manifest: Manifest) {
     this.sources = new Map(manifest.sources.map((source) => [source.id, source]));
@@ -247,7 +272,16 @@ export class ManifestIndex {
     }
     this.rows = {
       findings: manifest.findings.map((f, i) =>
-        this.row('findings', i, f, f.source, f.rule, f.target, f.severity, f.confidence),
+        this.row(
+          'findings',
+          i,
+          f,
+          f.source,
+          f.rule,
+          f.writes?.length ? (f.declaration?.name ?? f.target) : f.target,
+          f.severity,
+          f.confidence,
+        ),
       ),
       sources: manifest.sources.map((s, i) =>
         this.row('sources', i, s, s.id, s.kind, sourceName(s), s.status),
@@ -267,6 +301,8 @@ export class ManifestIndex {
         this.row('gaps', i, g, g.source, g.reason, g.reason, 'gap'),
       ),
     };
+    for (const row of this.rows.findings)
+      if ('polyfill' in row.data && row.data.polyfill) this.polyfills.add(row.id);
     for (const rows of Object.values(this.rows)) for (const row of rows) this.byId.set(row.id, row);
   }
 
@@ -329,6 +365,7 @@ export class ManifestIndex {
     const words = filters.query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     return this.rows[filters.view].filter(
       (row) =>
+        (filters.includePolyfills || !this.polyfills.has(row.id)) &&
         words.every((word) => row.search.includes(word)) &&
         (!filters.severity || row.status === filters.severity) &&
         (!filters.confidence || row.confidence === filters.confidence),

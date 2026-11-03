@@ -12,11 +12,13 @@ import { badge, bytes, count, empty, externalLink, html, human, type Markup } fr
 import {
   codeWindow,
   viewerTarget,
+  writeRows,
   type SourceText,
   type Viewer,
   type ViewerTarget,
 } from './source-view.js';
 import { type OriginalSources, type OriginalView } from './original-sources.js';
+import { englishMessages } from '@bloodhound-rs/playground';
 
 export function sourceButton(index: ManifestIndex, id: string, compact = false): Markup {
   const source = index.sources.get(id);
@@ -156,7 +158,7 @@ function findingNav(index: ManifestIndex, row: RecordRow): Markup {
       return x.line - y.line || x.column - y.column || a.index - b.index;
     });
   if (rows.length < 2) return html``;
-  const at = rows.findIndex((candidate) => candidate.id === row.id);
+  const at = rows.findIndex((candidate) => candidate.index === row.index);
   const prev = rows[at - 1];
   const next = rows[at + 1];
   return html`<span class="code-nav"
@@ -327,8 +329,11 @@ function originalSourceCard(
 ): Markup {
   const reference = originals.reference(source);
   if (!reference) return html``;
-  const state = originals.previews.get(row.id);
-  const location = 'location' in row.data ? row.data.location : undefined;
+  const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
+  const atDeclaration = Boolean(view.declaration && declaration);
+  const state = originals.previews.get(`${row.id}${atDeclaration ? ':declaration' : ''}`);
+  const writeLocation = 'location' in row.data ? row.data.location : undefined;
+  const location = atDeclaration ? declaration!.location : writeLocation;
   const path = state?.path ?? location?.original?.source;
   const origin =
     state?.origin === 'project'
@@ -340,6 +345,27 @@ function originalSourceCard(
           : '';
   return html`<div class="original-source">
     <h4>Original source</h4>
+    ${declaration && writeLocation
+      ? html`<div class="action-row">
+          <button class="text-link" data-action="write-open" aria-pressed="${!atDeclaration}">
+            ${englishMessages['source.writePosition']
+              .replace('{line}', String((writeLocation.original ?? writeLocation).line))
+              .replace('{column}', String((writeLocation.original ?? writeLocation).column))}
+          </button>
+          <button class="text-link" data-action="declaration-open" aria-pressed="${atDeclaration}">
+            ${englishMessages['source.declarationPosition']
+              .replace('{name}', declaration.name)
+              .replace(
+                '{line}',
+                String((declaration.location.original ?? declaration.location).line),
+              )
+              .replace(
+                '{column}',
+                String((declaration.location.original ?? declaration.location).column),
+              )}
+          </button>
+        </div>`
+      : ''}
     ${path ? html`<p class="url">${path}</p>` : ''}
     <p class="aside-hint">Source map: ${reference.file ?? reference.url}</p>
     ${location
@@ -452,8 +478,10 @@ export function inspector(
       'Inspect a record',
       'Select a record to see its source, location and dependency relationships.',
     );
+  const writes = writeRows(row);
+  const activeRow = writes[originalView.write ?? 0] ?? row;
   const source = row.source ? index.sources.get(row.source) : undefined;
-  const location = 'location' in row.data ? row.data.location : undefined;
+  const location = 'location' in activeRow.data ? activeRow.data.location : undefined;
   const parent = source && location ? index.parentLocation(source.id, location) : undefined;
   const entryOwners = row.source
     ? [...index.entryReach].filter(([, reach]) => reach.has(row.source!)).map(([id]) => id)
@@ -486,11 +514,43 @@ export function inspector(
           Copy JSON
         </button>
       </div>
-      ${row.view === 'findings' ? findingDetails(row.data as ManifestFinding) : ''}
+      ${writes.length > 1
+        ? html`<section class="detail-section">
+            <h3>
+              ${englishMessages[
+                row.type === 'module-state-write' ? 'record.writes' : 'record.occurrences'
+              ].replace('{count}', String(writes.length))}
+            </h3>
+            <div class="action-row">
+              ${writes.map((write, index) => {
+                const position = 'location' in write.data ? write.data.location : undefined;
+                const at = position?.original ?? position;
+                return at
+                  ? html`<button
+                      class="text-link"
+                      data-action="write-select"
+                      data-write="${index}"
+                      aria-pressed="${index === (originalView.write ?? 0)}"
+                    >
+                      ${englishMessages[
+                        row.type === 'module-state-write'
+                          ? 'source.writeOccurrence'
+                          : 'source.occurrence'
+                      ]
+                        .replace('{index}', String(index + 1))
+                        .replace('{line}', String(at.line))
+                        .replace('{column}', String(at.column))}
+                    </button>`
+                  : '';
+              })}
+            </div>
+          </section>`
+        : ''}
+      ${row.view === 'findings' ? findingDetails(activeRow.data as ManifestFinding) : ''}
       ${row.view === 'dependencies' ? dependencyDetails(index, row.data as ManifestDependency) : ''}
       ${row.view === 'gaps' ? gapDetails(row.data as ManifestGap) : ''}
       ${source
-        ? fileCard(index, source, row, viewer, texts, originals, originalView)
+        ? fileCard(index, source, activeRow, viewer, texts, originals, originalView)
         : html`<section class="detail-section">
             <h3>Scope</h3>
             <p>This gap applies to the scan as a whole.</p>
@@ -581,6 +641,25 @@ function findingDetails(finding: ManifestFinding): Markup {
   return html`<section class="detail-section">
     <h3>Recorded operation <span class="pill">${finding.operation}</span></h3>
     <pre class="snippet"><code>${finding.snippet || 'No code excerpt provided.'}</code></pre>
+    ${finding.declaration
+      ? html`<p class="detail-line">
+          <span class="detail-label">${englishMessages['source.declaration']}</span>
+          <code
+            >${finding.declaration.name} ·
+            L${(finding.declaration.location.original ?? finding.declaration.location).line}:${(
+              finding.declaration.location.original ?? finding.declaration.location
+            ).column}</code
+          >
+        </p>`
+      : ''}
+    ${finding.polyfill
+      ? html`<p class="aside-hint">
+          ${englishMessages['polyfill.detail'].replace(
+            '{target}',
+            finding.polyfill.guardTarget ?? finding.target,
+          )}
+        </p>`
+      : ''}
     ${finding.detail
       ? html`<p class="detail-line">
           <span class="detail-label">${detailLabel}</span><code>${finding.detail}</code>

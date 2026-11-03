@@ -189,7 +189,8 @@ pub struct Options {
     /// Extra request headers keyed by `host[:port]`.
     pub request_headers: BTreeMap<String, BTreeMap<String, String>>,
     pub proxy: Option<String>,
-    /// Decode `sourceMappingURL` comments and attach original locations.
+    /// Decode source maps, attach original locations and verify module-state
+    /// writes against embedded original sources.
     pub source_maps: bool,
     /// Internal: identifies the run for cancellation lookups.
     #[serde(skip_serializing)]
@@ -349,6 +350,38 @@ pub struct Finding {
     /// Optional extra context such as the method name or value type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polyfill: Option<Polyfill>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<BindingDeclaration>,
+}
+
+/// Lexical binding associated with a module-state write.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingDeclaration {
+    pub name: String,
+    pub span: Span,
+    /// Only let bindings remain eligible after original-source classification.
+    #[serde(skip)]
+    pub is_let: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<OriginalLocation>,
+}
+
+/// An API fallback installed behind a native feature check.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Polyfill {
+    pub guard: PolyfillGuard,
+    pub guard_target: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolyfillGuard {
+    Missing,
+    NotFunction,
 }
 
 /// Why a dependency was discovered. Determines the child resource kind and
@@ -480,6 +513,10 @@ pub struct OriginalLocation {
     pub column: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
 }
 
 /// A resource that was analyzed.
@@ -545,6 +582,48 @@ pub struct ManifestFinding {
     pub snippet: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polyfill: Option<Polyfill>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<ManifestDeclaration>,
+    /// All operations when findings are grouped by declaration or source line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<ManifestWrite>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestWrite {
+    pub target: String,
+    pub operation: String,
+    pub confidence: Confidence,
+    pub location: Location,
+    pub snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polyfill: Option<Polyfill>,
+}
+
+impl ManifestFinding {
+    pub fn as_write(&self) -> ManifestWrite {
+        ManifestWrite {
+            target: self.target.clone(),
+            operation: self.operation.clone(),
+            confidence: self.confidence,
+            location: self.location.clone(),
+            snippet: self.snippet.clone(),
+            detail: self.detail.clone(),
+            polyfill: self.polyfill.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestDeclaration {
+    pub name: String,
+    pub location: Location,
 }
 
 /// A dependency edge in the manifest.

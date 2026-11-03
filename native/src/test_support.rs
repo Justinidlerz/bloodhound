@@ -73,6 +73,7 @@ pub fn analyze_js(code: &str, mode: ScriptMode) -> Analysis {
             max_candidates: 16,
         },
         &Cancellation::never(),
+        None,
     )
 }
 

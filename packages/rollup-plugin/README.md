@@ -8,7 +8,15 @@ Scans the emitted bundle with [`@bloodhound-rs/core`](../../README.md) during `g
 pnpm add -D @bloodhound-rs/rollup-plugin
 ```
 
-Requires Node.js 22+ and a supported native platform for `@bloodhound-rs/core`.
+Requires Node.js 22.12+ and a supported native platform for `@bloodhound-rs/core`.
+
+Both ESM static imports and CommonJS loading are supported:
+
+```js
+const { bloodhound } = require('@bloodhound-rs/rollup-plugin');
+```
+
+Both entries use the same synchronous ESM module graph, including core and its native loader. CommonJS loading uses Node.js 22.12+'s native `require(esm)` support; consumers do not need dynamic imports. For TypeScript CommonJS source with static imports, use TypeScript 5.8+ with `module: 'NodeNext'`.
 
 ## Usage
 
@@ -74,7 +82,27 @@ The same plugin instance is valid in all three bundlers. Scanning uses `generate
 
 Diagnostics expose the canonical rule and target (`global-write`, `window.sharedConfig`). `allowGlobals` accepts canonical paths and the shorthand `sharedConfig`. The manifest retains all findings even when warning filters suppress some diagnostics. Plugin severity defaults to warnings; use `rules` or category options to enforce your release policy independently of the SDK's severity labels.
 
-ESM output also reports `module-state-write` when functions or callbacks assign module-level variables or mutate their properties. These values survive page remounts because cached module initialization does not rerun. The diagnostic points to the write, and source maps can resolve its original source. Configure it with `rules: { 'module-state-write': 'warn' }` (the default). A reset function alone does not suppress this warning; the scanner does not prove page lifecycle execution.
+ESM output also reports `module-state-write` when functions or callbacks assign module-level `let` variables or mutate their properties. These values survive page remounts because cached module initialization does not rerun. The diagnostic points to the write, and source maps can resolve its original source. Configure it with `rules: { 'module-state-write': 'warn' }` (the default). A reset function alone does not suppress this warning; the scanner does not prove page lifecycle execution.
+
+Emit sourcemaps with `sourcesContent` to distinguish original module writes from bundler-generated initialization assignments. The scanner checks the original module's scopes and write locations, excluding declarations while retaining later mutations of `let` bindings. Original `var` and `const` bindings are excluded, including mutations of `const` objects; `let` bindings compiled to `var` remain eligible. The plugin enables `sourceMaps` by default; without usable original source content, only generated `let` bindings are eligible.
+
+Function declarations and bindings initialized with function/arrow literals are excluded from `module-state-write`. Variables assigned a callback after initialization remain eligible. Recognized global-object aliases, including `document.defaultView` and simple synchronous IIFE return values, use the global mutation rules.
+
+`module-state-write` ignores resources under `node_modules`, including dependency code identified by original sourcemap paths inside an application bundle. This path-based exclusion does not require `sourcesContent` and does not affect other rules.
+
+Writes sharing a declaration within the same resource are grouped into one finding. `finding.writes` contains all write sites when there are multiple, while top-level position fields retain the first write. Manifest summaries and plugin diagnostic counts use the grouped records.
+
+Other rules group findings by resource, rule, original source file and line, falling back to the generated line without a mapped position. Each operation retains its position, target, snippet, detail and polyfill metadata in `writes`. Polyfill and ordinary findings remain separate so the visibility toggle only hides polyfills.
+
+`allowGlobals` filters each operation before producing a grouped diagnostic. Its `targets` lists the remaining targets, and its location points to the first remaining operation. The manifest retains all operations.
+
+## Polyfill records
+
+The Rust scanner identifies functions installed behind a missing-native API check. It handles `if`, conditional expressions and short-circuit checks for both JavaScript builtins and browser APIs, including Canvas, fetch and Request. A single guard can cover related API installations, such as `if (!window.fetch) { window.fetch = fetchPolyfill; window.Request = RequestPolyfill; }`.
+
+Findings carry `polyfill.guard` and `polyfill.guardTarget` to identify the installation condition. Playground hides all identified polyfills by default with a show/hide toggle. No browser targets or compatibility database are required. The same metadata is available from the core SDK and in the plugin's callback or emitted manifest.
+
+Unconditional overrides, monitoring wrappers and checks that cannot be resolved remain visible. Package names alone do not classify code as a polyfill. Existing manifests without this metadata need a new scan. Raw findings, summary counts, diagnostics, source maps and emitted JavaScript are preserved.
 
 ## Receive the manifest in a callback
 

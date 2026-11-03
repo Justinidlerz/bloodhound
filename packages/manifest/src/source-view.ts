@@ -2,6 +2,31 @@ import { safeUrl } from './url.js';
 import type { Location, ManifestIndex, ManifestSource, RecordRow } from './manifest.js';
 import { projectFileUrl, type ProjectWorkspace } from './original-sources.js';
 
+/** Independent preview rows for every operation in a grouped finding. */
+export function writeRows(row: RecordRow): RecordRow[] {
+  const writes = 'writes' in row.data ? row.data.writes : undefined;
+  return writes?.length
+    ? writes.map((write, index) => ({
+        ...row,
+        id: index === 0 ? row.id : `${row.id}:write:${index}`,
+        data: { ...row.data, ...write, detail: write.detail, polyfill: write.polyfill },
+      }))
+    : [row];
+}
+
+/** A source-preview record at the binding definition instead of its write. */
+export function declarationRow(row: RecordRow): RecordRow | undefined {
+  const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
+  return declaration
+    ? {
+        ...row,
+        id: `${row.id}:declaration`,
+        title: declaration.name,
+        data: { ...row.data, location: declaration.location },
+      }
+    : undefined;
+}
+
 /** State of one on-demand source fetch, keyed by URL in the app. */
 export interface SourceText {
   status: 'loading' | 'ready' | 'error';

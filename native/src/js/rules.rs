@@ -150,6 +150,9 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                     "update"
                 };
                 self.finding(rule, span, target.dotted(), op, detail);
+                if op == "write" && matches!(value, Value::Function) {
+                    self.mark_polyfill(target, span);
+                }
             }
         }
         // Propagate the value into a local binding so aliases resolve later.
@@ -483,6 +486,11 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                                         operation,
                                         Some(api.clone()),
                                     );
+                                    if method == "defineProperty"
+                                        && Self::is_function_descriptor(args.get(2))
+                                    {
+                                        self.mark_polyfill(&t, span);
+                                    }
                                 }
                             }
                         }

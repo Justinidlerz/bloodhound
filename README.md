@@ -10,7 +10,9 @@ CSS files and inline `<style>` blocks are discovered and listed. CSS selectors, 
 pnpm add @bloodhound-rs/core
 ```
 
-Requires Node.js 22+. Keep optional dependencies enabled so the native package for the current platform is installed. Supported targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Linux musl is not supported.
+Requires Node.js 22.12+. Keep optional dependencies enabled so the native package for the current platform is installed. Supported targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Linux musl is not supported.
+
+ESM `import` and CommonJS `require('@bloodhound-rs/core')` load the same synchronous module graph. CommonJS loading uses Node.js 22.12+'s native `require(esm)` support; no dynamic import or initialization wrapper is needed.
 
 ## Embed the Playground
 
@@ -75,9 +77,13 @@ An inserted node is suppressed when it is removed later in the same straight-lin
 
 The scan follows scripts belonging to the current document. Iframe and `srcdoc` references are listed as `not-followed / iframe-isolated-global`; their child documents and scripts are not loaded or analyzed. SVG/MathML contents are skipped with a coverage gap, and ordinary HTML after a self-closing foreign element remains eligible for scanning.
 
+Findings of the same rule within one resource and one original source line are grouped into one record. The key includes the original file path; without a mapped position, it uses the generated line. `module-state-write` groups by declaration instead. Polyfill and ordinary findings remain in separate groups so hiding polyfills does not hide other operations.
+
+For groups, `writes` preserves every operation's target, operation, confidence, location, snippet, detail and polyfill metadata. Top-level position fields describe the first operation; group confidence is `medium` if any operation is `medium`. Summaries and plugin diagnostics count grouped records. Playground provides a position selector for all operations in each group.
+
 ### ESM module state
 
-ESM module initialization runs once per module instance. Reusing the same module in a document does not reset its variables when a page or component mounts again. `module-state-write` records assignments, updates, destructuring, and property writes/deletes from functions or callbacks to module-level variables:
+ESM module initialization runs once per module instance. Reusing the same module in a document does not reset its variables when a page or component mounts again. `module-state-write` records assignments, updates, destructuring, and property writes/deletes from functions or callbacks to module-level `let` bindings. `var` and `const` bindings are excluded from this rule, including mutations of `const` objects:
 
 ```jsx
 let ready = false;
@@ -89,9 +95,23 @@ export const App = () => {
 };
 ```
 
-Use `scriptMode: 'module'` for JavaScript/JSX source. The plugin derives this mode from ESM output; HTML uses `<script type="module">`. Findings point to the write and retain the existing source-map preview support. Read-only declarations, writes during module evaluation/direct initialization IIFEs, imported bindings, and function-local or shadowed variables are excluded. Classic scripts retain their existing rules.
+Use `scriptMode: 'module'` for JavaScript/JSX source. The plugin derives this mode from ESM output; HTML uses `<script type="module">`. Findings point to the write and retain the existing source-map preview support. Read-only declarations, function declarations, bindings initialized with function/arrow literals, writes during module evaluation/direct initialization IIFEs, imported bindings, and function-local or shadowed variables are excluded. A binding initialized without a function, then assigned a callback later, remains eligible. Classic scripts retain their existing rules.
+
+`module-state-write` also excludes resources under `node_modules`, identified from the resource path or a mapped original source path. Sourcemap paths are sufficient for this exclusion even without embedded source content. Other rules continue to report mutations in dependencies.
+
+Recognized global-object aliases use the global mutation rules instead of `module-state-write`. This includes `document.defaultView` and simple synchronous IIFEs returning a global object through direct returns, conditional branches, or `try`/`catch`. Sourcemap analysis also corrects module-state candidates whose original source identifies a global mutation. Unknown return paths remain unresolved.
+
+With `sourceMaps: true` and embedded `sourcesContent`, the Rust scanner checks mapped writes against the original JavaScript/TypeScript module. Declarations lowered into lazy initialization assignments are excluded, including constant values and function declarations. Later assignments, updates and property mutations of `let` bindings remain candidates. The original declaration determines eligibility, so `let` writes remain eligible even when emitted as `var`. Without usable original source content, the rule uses the generated declaration kind and retains only `let` bindings.
+
+Each module-state finding includes `declaration: { name, location }` for its lexical binding. Both the write and definition retain generated positions and original source positions when available. Playground can switch between them and highlight the declaration identifier in the original source.
+
+Multiple writes to the same declaration within one resource produce one finding, even across different lines. Playground lists the binding once and lets users switch between all write locations and its declaration.
 
 This warning identifies persistent state, not a proven lifecycle bug. A separate reset function does not suppress it because static scanning does not establish that every page entry or teardown calls that function. Writes through aliases, opaque helper calls, collection methods, and state enclosed by module-initialization factories are not inferred by this rule. Keep per-instance state inside the component/page instance, or explicitly reset shared state in its lifecycle.
+
+### Conditional polyfills
+
+API fallbacks installed behind a missing-native check carry `polyfill` metadata. This includes JavaScript builtins, browser APIs and grouped installations such as fetch with Request, Response and Headers. Playground hides identified polyfills by default, independently of browser targets, with an option to show them. Code, raw findings and severity counts are preserved. Unconditional overrides, monitoring wrappers and unrecognized checks remain visible.
 
 ## Manifest v2
 

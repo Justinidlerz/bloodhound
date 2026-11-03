@@ -20,12 +20,14 @@
 mod builtins;
 mod eval;
 mod module_state;
+mod polyfill;
 mod rules;
 mod values;
 mod visitor;
 
 use crate::model::{
-    Analysis, Confidence, Dependency, DependencyKind, Finding, Gap, Rule, ScriptMode, Span,
+    Analysis, Confidence, Dependency, DependencyKind, Finding, Gap, PolyfillGuard, Rule,
+    ScriptMode, Span,
 };
 use crate::scheduler::Cancellation;
 use oxc_allocator::Allocator;
@@ -54,12 +56,28 @@ pub struct JsOptions {
 pub const PARSER_VERSION: &str = "oxc-0.154.0";
 
 /// Parses and analyzes one JavaScript resource.
-pub fn analyze(source: &str, options: &JsOptions, cancel: &Cancellation) -> Analysis {
-    let allocator = Allocator::default();
+pub fn analyze(
+    source: &str,
+    options: &JsOptions,
+    cancel: &Cancellation,
+    map: Option<&sourcemap::DecodedMap>,
+) -> Analysis {
     let source_type = match options.script_mode {
         ScriptMode::Module => SourceType::mjs().with_jsx(true),
         ScriptMode::Classic => SourceType::cjs().with_script(true),
     };
+    let mut analysis = analyze_as(source, source_type, options, cancel);
+    module_state::refine(&mut analysis, source, map, options, cancel);
+    analysis
+}
+
+fn analyze_as(
+    source: &str,
+    source_type: SourceType,
+    options: &JsOptions,
+    cancel: &Cancellation,
+) -> Analysis {
+    let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     let mut analysis = Analysis::default();
     if parsed.fatal_error || parsed.diagnostics.has_errors() {
@@ -162,6 +180,7 @@ pub(crate) struct Analyzer<'s, 'c> {
     /// Whether the root scope is strict (`"use strict"` or module).
     strict: bool,
     findings: Vec<Finding>,
+    polyfill_guards: Vec<(String, PolyfillGuard, usize, bool)>,
     deferred: Vec<Deferred>,
     listener_removals: Vec<ListenerRemoval>,
     /// Cleanup is only proven within the same straight-line block.
@@ -180,6 +199,8 @@ pub(crate) struct Analyzer<'s, 'c> {
     this_aliases: HashSet<SymbolId>,
     /// Parameter bindings and names of local functions, by function binding.
     fn_params: HashMap<SymbolId, Vec<Option<(SymbolId, String)>>>,
+    /// Declaration spans of module bindings initialized with function literals.
+    module_functions: HashSet<Span>,
     /// Recorded calls to local functions: binding and argument identities.
     fn_calls: Vec<(SymbolId, Vec<Option<ArgKey>>)>,
     /// Owner binding of each enclosing function, innermost last.
@@ -216,6 +237,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             uncertain: false,
             strict,
             findings: vec![],
+            polyfill_guards: vec![],
             deferred: vec![],
             listener_removals: vec![],
             block: 0,
@@ -224,6 +246,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             aliases: HashMap::new(),
             this_aliases: HashSet::new(),
             fn_params: HashMap::new(),
+            module_functions: HashSet::new(),
             fn_calls: vec![],
             fn_stack: vec![],
             pending_owner: vec![],
@@ -294,6 +317,8 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                 operation: operation.into(),
                 confidence,
                 detail,
+                polyfill: None,
+                declaration: None,
             });
         }
     }
@@ -322,6 +347,8 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                     operation: operation.into(),
                     confidence,
                     detail,
+                    polyfill: None,
+                    declaration: None,
                 },
                 node,
                 listener,
@@ -399,6 +426,13 @@ impl<'s, 'c> Analyzer<'s, 'c> {
     /// identities, and one paired call is enough to cancel the helper's
     /// single finding.
     fn finish(mut self) -> Analysis {
+        // Classify after the walk so declaration order does not affect exclusion.
+        self.findings.retain(|finding| {
+            !finding
+                .declaration
+                .as_ref()
+                .is_some_and(|declaration| self.module_functions.contains(&declaration.span))
+        });
         let removals = std::mem::take(&mut self.listener_removals);
         let fn_params = std::mem::take(&mut self.fn_params);
         let fn_calls = std::mem::take(&mut self.fn_calls);

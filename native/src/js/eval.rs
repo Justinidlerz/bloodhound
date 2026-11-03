@@ -5,7 +5,7 @@
 //! the symbol table), member chains, literals, templates, concatenation,
 //! conditionals, object/array literals, `document.createElement`, and
 //! `new URL(x, import.meta.url)`. It is deliberately shallow: no calls are
-//! followed except the handful of builtins listed here.
+//! followed except the builtins listed here and direct, synchronous IIFE returns.
 
 use super::Analyzer;
 use super::builtins;
@@ -33,7 +33,13 @@ impl<'s, 'c> Analyzer<'s, 'c> {
     pub(super) fn ident_value(&mut self, ident: &IdentifierReference<'_>) -> Value {
         match self.symbol_of(ident) {
             Some(symbol) => {
-                let value = self.values.get(&symbol).cloned().unwrap_or(Value::Unknown);
+                let value = self.values.get(&symbol).cloned().unwrap_or_else(|| {
+                    if self.scoping.symbol_flags(symbol).is_function() && !self.is_mutable(symbol) {
+                        Value::Function
+                    } else {
+                        Value::Unknown
+                    }
+                });
                 if value.is_tracked() && self.is_mutable(symbol) {
                     self.uncertain = true;
                 }
@@ -273,6 +279,11 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                                 None if key == "document" => Target::new(Root::Document),
                                 None => t.child(key),
                             }
+                        } else if t.root == Root::Document
+                            && t.path.is_empty()
+                            && key == "defaultView"
+                        {
+                            Target::new(Root::Global)
                         } else {
                             t.child(key)
                         }
@@ -336,7 +347,82 @@ impl<'s, 'c> Analyzer<'s, 'c> {
         }
     }
 
+    /// Resolve simple getters without executing their bodies. Every branch
+    /// must return a known value; fallthrough and other statements stay unknown.
+    fn eval_return(&mut self, statements: &[Statement<'_>], depth: usize) -> Value {
+        if depth > 64 {
+            return Value::Unknown;
+        }
+        let [statement] = statements else {
+            return Value::Unknown;
+        };
+        match statement {
+            Statement::ReturnStatement(statement) => statement
+                .argument
+                .as_ref()
+                .map(|value| self.eval_depth(value, depth + 1))
+                .unwrap_or(Value::Undefined),
+            Statement::BlockStatement(block) => self.eval_return(&block.body, depth + 1),
+            Statement::IfStatement(statement) => {
+                let consequent =
+                    self.eval_return(std::slice::from_ref(&statement.consequent), depth + 1);
+                let alternate = statement
+                    .alternate
+                    .as_ref()
+                    .map(|alternate| self.eval_return(std::slice::from_ref(alternate), depth + 1))
+                    .unwrap_or(Value::Undefined);
+                self.join_branches(consequent, alternate)
+            }
+            Statement::TryStatement(statement) if statement.finalizer.is_none() => {
+                let body = self.eval_return(&statement.block.body, depth + 1);
+                let handler = statement
+                    .handler
+                    .as_ref()
+                    .map(|handler| self.eval_return(&handler.body.body, depth + 1))
+                    .unwrap_or(Value::Unknown);
+                self.join_branches(body, handler)
+            }
+            _ => Value::Unknown,
+        }
+    }
+
     fn eval_call(&mut self, c: &CallExpression<'_>, depth: usize) -> Value {
+        match c.callee.get_inner_expression() {
+            Expression::FunctionExpression(function)
+                if !function.r#async && !function.generator =>
+            {
+                let strict = self.strict
+                    || function.body.as_ref().is_some_and(|body| {
+                        body.directives
+                            .iter()
+                            .any(|directive| directive.directive == "use strict")
+                    });
+                self.this_stack.push(if strict {
+                    Value::Undefined
+                } else {
+                    Value::Targets(vec![Target::new(Root::Global)])
+                });
+                let value = function
+                    .body
+                    .as_ref()
+                    .map(|body| self.eval_return(&body.statements, depth + 1))
+                    .unwrap_or(Value::Unknown);
+                self.this_stack.pop();
+                return value;
+            }
+            Expression::ArrowFunctionExpression(function) if !function.r#async => {
+                return match &function.body {
+                    ArrowFunctionBody::FunctionBody(body) => {
+                        self.eval_return(&body.statements, depth + 1)
+                    }
+                    body => body
+                        .as_expression()
+                        .map(|value| self.eval_depth(value, depth + 1))
+                        .unwrap_or(Value::Unknown),
+                };
+            }
+            _ => {}
+        }
         let callee = self.eval_depth(&c.callee, depth + 1);
         let targets = callee.targets();
         let Some(t) = targets.first() else {

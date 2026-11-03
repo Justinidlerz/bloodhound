@@ -206,10 +206,19 @@ export function diagnosticsFromManifest(
     ].includes(item.rule)
       ? 'global'
       : 'finding';
-    // Accept both canonical paths and the previous shorthand without window.
-    const target = item.target.replace(/^window\./, '');
-    if (kind === 'global' && allow.some((match) => match(item.target) || match(target))) continue;
-    let location = { ...item.location };
+    const writes = (item.writes?.length ? item.writes : [item]).filter(
+      (write) =>
+        kind !== 'global' ||
+        !allow.some(
+          // Accept both canonical paths and the previous shorthand without window.
+          (match) => match(write.target) || match(write.target.replace(/^window\./, '')),
+        ),
+    );
+    const first = writes[0];
+    if (!first) continue;
+    const targets = [...new Set(writes.map((write) => write.target))];
+    const operations = [...new Set(writes.map((write) => write.operation))];
+    let location = { ...first.location };
     let source = sources.get(item.source);
     const visited = new Set<string>();
     while (source?.inline && !visited.has(source.id)) {
@@ -229,11 +238,11 @@ export function diagnosticsFromManifest(
       sourceId: item.source,
       fileName: fileNames.get(item.source),
       rule: item.rule,
-      targets: [item.target],
-      message: `${item.rule}: ${item.target} (${item.operation})`,
+      targets,
+      message: `${item.rule}: ${targets.join(', ')} (${operations.join(', ')})`,
       location,
-      original: item.location.original,
-      detail: item.detail,
+      original: first.location.original,
+      detail: first.detail,
     });
   }
   return result.filter(

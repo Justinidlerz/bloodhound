@@ -80,6 +80,7 @@ const initialFilters: Filters = {
   grouping: 'type',
   group: null,
   includeDependencies: false,
+  includePolyfills: false,
 };
 
 function ViewerSession({
@@ -109,7 +110,7 @@ function ViewerSession({
   const query = useDeferredValue(filters.query);
   const baseRows = useMemo(
     () => index.baseRows({ ...filters, query }),
-    [index, filters.view, query, filters.severity, filters.confidence],
+    [index, filters.view, query, filters.severity, filters.confidence, filters.includePolyfills],
   );
   const groups = useMemo(
     () => index.groups(baseRows, filters.grouping),
@@ -187,6 +188,9 @@ function ViewerSession({
       render: (_, row) => (
         <Button variant="link" onClick={() => select(row)}>
           {recordTitle(row)}
+          {'writes' in row.data && row.data.writes?.length
+            ? ` · ${t(row.type === 'module-state-write' ? 'record.writes' : 'record.occurrences', { count: row.data.writes.length })}`
+            : ''}
         </Button>
       ),
     },
@@ -251,13 +255,35 @@ function ViewerSession({
             variant="toggle"
             aria-pressed={filters.view === view}
             onClick={() => {
-              if (filters.view !== view) filter({ ...initialFilters, view });
+              if (filters.view !== view)
+                filter({ ...initialFilters, view, includePolyfills: filters.includePolyfills });
             }}
           >
-            {t('view.count', { name: t(`view.${view}`), count: index.rows[view].length })}
+            {t('view.count', {
+              name: t(`view.${view}`),
+              count:
+                index.rows[view].length -
+                (view === 'findings' && !filters.includePolyfills ? index.polyfills.size : 0),
+            })}
           </Button>
         ))}
       </nav>
+      {filters.view === 'findings' && index.polyfills.size > 0 ? (
+        <div className="bh-controls">
+          <span>
+            {t(filters.includePolyfills ? 'polyfill.included' : 'polyfill.hidden', {
+              count: index.polyfills.size,
+            })}
+          </span>
+          <Button
+            variant="toggle"
+            aria-pressed={Boolean(filters.includePolyfills)}
+            onClick={() => filter({ includePolyfills: !filters.includePolyfills })}
+          >
+            {t(filters.includePolyfills ? 'polyfill.hide' : 'polyfill.show')}
+          </Button>
+        </div>
+      ) : null}
       <div className="bh-controls bh-filters">
         <Input
           value={filters.query}
@@ -378,7 +404,9 @@ function ViewerSession({
                   : ''}
               </p>
               {source ? <p className="bh-path">{source.file ?? source.url ?? source.id}</p> : null}
-              {'location' in row.data && row.data.location ? (
+              {'location' in row.data &&
+              row.data.location &&
+              !('writes' in row.data && row.data.writes?.length) ? (
                 <p>
                   {t('record.position', {
                     line: row.data.location.line,
@@ -386,8 +414,21 @@ function ViewerSession({
                   })}
                 </p>
               ) : null}
-              {'detail' in row.data && row.data.detail ? <p>{row.data.detail}</p> : null}
-              {'snippet' in row.data ? <pre className="bh-snippet">{row.data.snippet}</pre> : null}
+              {'detail' in row.data &&
+              row.data.detail &&
+              !('writes' in row.data && row.data.writes?.length) ? (
+                <p>{row.data.detail}</p>
+              ) : null}
+              {'polyfill' in row.data && row.data.polyfill && !row.data.writes?.length ? (
+                <p>
+                  {t('polyfill.detail', {
+                    target: row.data.polyfill.guardTarget ?? row.data.target,
+                  })}
+                </p>
+              ) : null}
+              {'snippet' in row.data && !row.data.writes?.length ? (
+                <pre className="bh-snippet">{row.data.snippet}</pre>
+              ) : null}
               {source && source.chain.length > 0 ? (
                 <div className="bh-controls" aria-label={t('record.entryChain')}>
                   {t('record.entryChain')}{' '}

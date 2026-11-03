@@ -68,7 +68,14 @@ export interface Location {
   endLine: number;
   endColumn: number;
   /** Original position from a source map when `sourceMaps` was enabled. */
-  original?: { source: string; line: number; column: number; name?: string };
+  original?: {
+    source: string;
+    line: number;
+    column: number;
+    name?: string;
+    endLine?: number;
+    endColumn?: number;
+  };
 }
 
 /** Optional bundler/consumer association. URLs are relative to the manifest unless absolute. */
@@ -116,6 +123,27 @@ export interface ManifestFinding {
   /** Trimmed excerpt of the offending expression. */
   snippet: string;
   detail?: string;
+  /** Definition of the lexical module binding modified by this record. */
+  declaration?: { name: string; location: Location };
+  /** All operations (including the first) grouped by declaration or rule/source line within one resource. */
+  writes?: ManifestWrite[];
+  /** API fallback identified by the scanner, independent of browser targets. */
+  polyfill?: {
+    guard: 'missing' | 'not-function';
+    /** Native API checked before installation; e.g. fetch guards a fetch/Request/Response bundle. */
+    guardTarget?: string;
+  };
+}
+
+export interface ManifestWrite {
+  target: string;
+  operation: string;
+  confidence: Confidence;
+  location: Location;
+  snippet: string;
+  /** Detail for this operation, such as the inserted node's tag. */
+  detail?: string;
+  polyfill?: ManifestFinding['polyfill'];
 }
 
 export interface ManifestDependency {

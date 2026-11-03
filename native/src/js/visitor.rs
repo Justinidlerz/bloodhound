@@ -251,6 +251,10 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         };
         if let Some(init) = &decl.init {
             if let (Some(symbol), Some(params)) = (binding, Self::fn_literal_params(init)) {
+                if self.scoping.symbol_scope_id(symbol) == self.scoping.root_scope_id() {
+                    self.module_functions
+                        .insert(self.scoping.symbol_span(symbol).into());
+                }
                 self.fn_params.insert(symbol, params);
                 self.pending_owner.push(Some(symbol));
                 self.visit_expression(init);
@@ -368,11 +372,20 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
     fn visit_if_statement(&mut self, stmt: &IfStatement<'a>) {
         self.visit_expression(&stmt.test);
         let before = self.values.clone();
+        let guards = self.polyfill_guards.len();
+        if let Some(guard) = self.polyfill_guard(&stmt.test, true) {
+            self.polyfill_guards.push(guard);
+        }
         self.conditional_depth += 1;
         self.visit_statement(&stmt.consequent);
+        self.polyfill_guards.truncate(guards);
         let consequent = std::mem::replace(&mut self.values, before);
         if let Some(alternate) = &stmt.alternate {
+            if let Some(guard) = self.polyfill_guard(&stmt.test, false) {
+                self.polyfill_guards.push(guard);
+            }
             self.visit_statement(alternate);
+            self.polyfill_guards.truncate(guards);
         }
         for (symbol, value) in consequent {
             let alternate = self.values.get(&symbol).cloned().unwrap_or(Value::Unknown);
@@ -384,7 +397,18 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
 
     fn visit_conditional_expression(&mut self, expr: &ConditionalExpression<'a>) {
         self.conditional_depth += 1;
-        walk::walk_conditional_expression(self, expr);
+        self.visit_expression(&expr.test);
+        let guards = self.polyfill_guards.len();
+        if let Some(guard) = self.polyfill_guard(&expr.test, true) {
+            self.polyfill_guards.push(guard);
+        }
+        self.visit_expression(&expr.consequent);
+        self.polyfill_guards.truncate(guards);
+        if let Some(guard) = self.polyfill_guard(&expr.test, false) {
+            self.polyfill_guards.push(guard);
+        }
+        self.visit_expression(&expr.alternate);
+        self.polyfill_guards.truncate(guards);
         self.conditional_depth -= 1;
     }
 
@@ -402,7 +426,13 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         if !guarded {
             self.conditional_depth += 1;
         }
+        let guards = self.polyfill_guards.len();
+        if let Some(guard) = self.polyfill_guard(&expr.left, expr.operator == LogicalOperator::And)
+        {
+            self.polyfill_guards.push(guard);
+        }
         self.visit_expression(&expr.right);
+        self.polyfill_guards.truncate(guards);
         if !guarded {
             self.conditional_depth -= 1;
         }

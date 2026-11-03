@@ -1,5 +1,5 @@
 import { AnyMap, traceSegment, type TraceMap } from '@jridgewell/trace-mapping';
-import type { SourceMapReference } from './types.js';
+import type { ManifestFinding, SourceMapReference } from './types.js';
 import type { Location, ManifestSource } from './manifest.js';
 import { safeUrl } from './url.js';
 
@@ -19,9 +19,12 @@ export interface OriginalPreview {
 }
 
 export interface OriginalView {
+  /** Selected operation within a grouped finding. */
+  write?: number;
   open: boolean;
   radius: number;
   wrap: boolean;
+  declaration?: boolean;
 }
 
 const MAX_MAP_BYTES = 64 * 1024 * 1024;
@@ -176,6 +179,7 @@ export class OriginalSources {
     source: ManifestSource,
     location: Location,
     retry = false,
+    original?: Location['original'],
   ): Promise<void> {
     const reference = this.reference(source);
     if (!reference) return;
@@ -187,16 +191,35 @@ export class OriginalSources {
       this.files.clear();
     }
     if (this.previews.has(id)) return;
-    const pending = this.readPreview(id, reference, location);
+    const pending = this.readPreview(id, reference, location, original);
     this.pending.set(id, pending);
     await pending;
     if (this.pending.get(id) === pending) this.pending.delete(id);
+  }
+
+  /** Resolve the definition in the same original module as the write. */
+  async previewDeclaration(
+    id: string,
+    source: ManifestSource,
+    write: Location,
+    declaration: NonNullable<ManifestFinding['declaration']>,
+    retry = false,
+  ): Promise<void> {
+    const original = this.overrides.has(source.id) ? undefined : declaration.location.original;
+    await this.preview(
+      `${id}:declaration`,
+      source,
+      original ? write : declaration.location,
+      retry,
+      original,
+    );
   }
 
   private async readPreview(
     id: string,
     reference: SourceMapReference,
     location: Location,
+    original?: Location['original'],
   ): Promise<void> {
     const revision = this.revision;
     this.previews.set(id, { status: 'loading' });
@@ -215,10 +238,10 @@ export class OriginalSources {
       const originalPath =
         localPath ?? map.sources[sourceIndex] ?? map.resolvedSources[sourceIndex];
       const at: Location = {
-        line: token[2] + 1,
-        column: token[3],
-        endLine: token[2] + 1,
-        endColumn: token[3],
+        line: original?.line ?? token[2] + 1,
+        column: original?.column ?? token[3],
+        endLine: original?.endLine ?? original?.line ?? token[2] + 1,
+        endColumn: original?.endColumn ?? original?.column ?? token[3],
       };
       let result: OriginalPreview | undefined;
       const local =
