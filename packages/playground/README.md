@@ -2,9 +2,11 @@
 
 React 18/19 components for Manifest v2. The viewer and resource selector are independent exports. Neither depends on the scanner's native binary or an application router.
 
-Module-state records with `declaration` metadata show both the write and variable definition positions. Select either position to preview generated code or the original source, using the same UI adapters, text loader and message overrides.
+Module-state records with `declaration` metadata open at the variable definition by default. Switch between declaration and write positions to preview generated code or the original source, using the same UI adapters, text loader and message overrides. Records without declaration metadata open at the write position.
 
-Grouped records with a `writes` array appear once, with a count and a position button for each operation. Module-state records use their declaration name; other rules group operations on the same original source line and display the first target. Each position shows its own target, snippet and detail, with generated-code and original-source previews. Module-state records also link to their shared declaration. Older manifests without `writes` retain their single-position display.
+Grouped records with a `writes` array appear once, with a count and a position button for each operation. Module-state records use their declaration name; other rules group operations on the same original source line and display the first target. Each position has generated-code and original-source previews; targets, snippets and details remain available in the record JSON. Module-state records also link to their shared declaration. Older manifests without `writes` retain their single-position display.
+
+The detail panel shows the title, type, status, confidence, source path and position first, followed by code. Selecting a record opens its original source automatically when a source map is associated; otherwise it opens generated code, or shows the recorded snippet when neither preview is available. Source map association and record JSON follow the code, then the entry chain and dependencies.
 
 | Export               | Responsibility                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------ |

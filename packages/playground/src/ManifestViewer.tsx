@@ -404,31 +404,18 @@ function ViewerSession({
                   : ''}
               </p>
               {source ? <p className="bh-path">{source.file ?? source.url ?? source.id}</p> : null}
-              {'location' in row.data &&
-              row.data.location &&
-              !('writes' in row.data && row.data.writes?.length) ? (
-                <p>
-                  {t('record.position', {
-                    line: row.data.location.line,
-                    column: row.data.location.column,
-                  })}
-                </p>
-              ) : null}
-              {'detail' in row.data &&
-              row.data.detail &&
-              !('writes' in row.data && row.data.writes?.length) ? (
-                <p>{row.data.detail}</p>
-              ) : null}
-              {'polyfill' in row.data && row.data.polyfill && !row.data.writes?.length ? (
-                <p>
-                  {t('polyfill.detail', {
-                    target: row.data.polyfill.guardTarget ?? row.data.target,
-                  })}
-                </p>
-              ) : null}
-              {'snippet' in row.data && !row.data.writes?.length ? (
-                <pre className="bh-snippet">{row.data.snippet}</pre>
-              ) : null}
+              <SourcePreview
+                key={row.id}
+                index={index}
+                row={row}
+                originals={originals}
+                components={ui}
+                customLoader={Boolean(loadText)}
+              />
+              <details>
+                <summary>{t('record.json')}</summary>
+                <pre className="bh-snippet">{JSON.stringify(row.data, null, 2)}</pre>
+              </details>
               {source && source.chain.length > 0 ? (
                 <div className="bh-controls" aria-label={t('record.entryChain')}>
                   {t('record.entryChain')}{' '}
@@ -449,18 +436,6 @@ function ViewerSession({
                   ))}
                 </div>
               ) : null}
-              <SourcePreview
-                key={row.id}
-                index={index}
-                row={row}
-                originals={originals}
-                components={ui}
-                customLoader={Boolean(loadText)}
-              />
-              <details>
-                <summary>{t('record.json')}</summary>
-                <pre className="bh-snippet">{JSON.stringify(row.data, null, 2)}</pre>
-              </details>
             </section>
           ) : null
         }

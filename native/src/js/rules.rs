@@ -27,24 +27,66 @@ use oxc_ast::ast::*;
 use oxc_span::GetSpan;
 use oxc_syntax::symbol::SymbolId;
 
-/// Classifies a mutation of `target`. Returns `None` for benign targets.
-fn classify_write(target: &Target) -> Option<Rule> {
+/// Whether assignment invokes a known native state setter. A matching property
+/// on a custom global object is still a shared mutation.
+fn native_state_setter(target: &Target) -> bool {
+    match &target.root {
+        Root::Global => {
+            (target.path.len() == 1
+                && builtins::BENIGN_WINDOW_WRITES.contains(&target.path[0].as_str()))
+                || (target.path.len() == 2
+                    && target.path[0] == "event"
+                    && builtins::EVENT_STATE_WRITES.contains(&target.path[1].as_str()))
+        }
+        Root::Document => {
+            let Some((property, receiver)) = target.path.split_last() else {
+                return false;
+            };
+            if receiver.is_empty() {
+                return property == "location"
+                    || builtins::BENIGN_DOCUMENT_WRITES.contains(&property.as_str());
+            }
+            if receiver.len() == 1 && receiver[0] == "location" {
+                return builtins::LOCATION_STATE_WRITES.contains(&property.as_str());
+            }
+            let direct_element = receiver.len() == 1
+                && (DOCUMENT_CONTAINERS.contains(&receiver[0].as_str())
+                    || matches!(receiver[0].as_str(), "scrollingElement" | "activeElement"));
+            let form_control = receiver.len() == 4
+                && receiver[0] == "forms"
+                && receiver[2] == "elements"
+                && !target.touches_prototype();
+            let active_element = receiver.len() == 1 && receiver[0] == "activeElement";
+            ((direct_element || form_control)
+                && builtins::ELEMENT_SCROLL_WRITES.contains(&property.as_str()))
+                || ((active_element || form_control)
+                    && builtins::CONTROL_STATE_WRITES.contains(&property.as_str()))
+                || (active_element && builtins::MEDIA_STATE_WRITES.contains(&property.as_str()))
+        }
+        Root::Host("location") => {
+            target.path.is_empty()
+                || (target.path.len() == 1
+                    && builtins::LOCATION_STATE_WRITES.contains(&target.path[0].as_str()))
+        }
+        _ => false,
+    }
+}
+
+/// Setter invocation is allowed; redefining/deleting that property is still a mutation.
+fn classify_write(target: &Target, operation: &str) -> Option<Rule> {
+    if matches!(operation, "write" | "update") && native_state_setter(target) {
+        return None;
+    }
     let first = target.path.first().map(String::as_str);
     match &target.root {
         Root::Global => match first {
             None => Some(Rule::GlobalWrite), // `window = x` is nonsense but flag it
-            Some(name) if builtins::BENIGN_WINDOW_WRITES.contains(&name) => None,
             Some(_) if target.touches_prototype() => Some(Rule::BuiltinMutation),
             Some(_) => Some(Rule::GlobalWrite),
         },
         Root::Document => match first {
             None => Some(Rule::GlobalWrite),
             Some("adoptedStyleSheets") => Some(Rule::StyleInjection),
-            Some(name)
-                if builtins::BENIGN_DOCUMENT_WRITES.contains(&name) && target.path.len() == 1 =>
-            {
-                None
-            }
             Some(container) if DOCUMENT_CONTAINERS.contains(&container) => {
                 match target.path.get(1).map(String::as_str) {
                     Some("style") => Some(Rule::DocumentStyleWrite),
@@ -61,10 +103,6 @@ fn classify_write(target: &Target) -> Option<Rule> {
             if matches!(target.root, Root::Host("history")) && first == Some("state") {
                 return Some(Rule::GlobalWrite);
             }
-            // `location.href = …` is navigation, not pollution.
-            if matches!(target.root, Root::Host("location")) {
-                return None;
-            }
             // `console.log = …`-style patching of host objects.
             Some(Rule::HostApiOverride)
         }
@@ -73,7 +111,7 @@ fn classify_write(target: &Target) -> Option<Rule> {
 
 impl<'s, 'c> Analyzer<'s, 'c> {
     /// Evaluates an assignment target to the abstract targets it denotes.
-    fn assignment_targets(&mut self, left: &AssignmentTarget<'_>) -> Vec<Target> {
+    pub(super) fn assignment_targets(&mut self, left: &AssignmentTarget<'_>) -> Vec<Target> {
         match left {
             AssignmentTarget::AssignmentTargetIdentifier(id) => match self.symbol_of(id) {
                 Some(symbol) => self.global_binding(symbol).into_iter().collect(),
@@ -139,18 +177,18 @@ impl<'s, 'c> Analyzer<'s, 'c> {
         let value = self.eval(&a.right);
         let targets = self.assignment_targets(&a.left);
         let span: Span = a.span().into();
+        let op = if a.operator.as_str() == "=" {
+            "write"
+        } else {
+            "update"
+        };
         for target in &targets {
             // Node property writes: track `src`/`href` and inline code for
             // dependency discovery, and flag `document.body.innerHTML`.
-            if let Some(rule) = classify_write(target) {
+            if let Some(rule) = classify_write(target, op) {
                 let detail = value.type_name().map(|t| t.to_string());
-                let op = if a.operator.as_str() == "=" {
-                    "write"
-                } else {
-                    "update"
-                };
                 self.finding(rule, span, target.dotted(), op, detail);
-                if op == "write" && matches!(value, Value::Function) {
+                if op == "write" && self.is_polyfill_implementation(&a.right, &value) {
                     self.mark_polyfill(target, span);
                 }
             }
@@ -220,7 +258,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             _ => vec![],
         };
         for target in &targets {
-            if let Some(rule) = classify_write(target) {
+            if let Some(rule) = classify_write(target, "delete") {
                 self.finding(rule, u.span().into(), target.dotted(), "delete", None);
             }
         }
@@ -258,7 +296,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                 .unwrap_or_default(),
         };
         for target in &targets {
-            if let Some(rule) = classify_write(target) {
+            if let Some(rule) = classify_write(target, "update") {
                 self.finding(
                     rule,
                     u.span().into(),
@@ -395,13 +433,17 @@ impl<'s, 'c> Analyzer<'s, 'c> {
         if method == "removeChild" {
             if let Some(Value::Node(node)) = args.first() {
                 if matches!(receiver, Value::Targets(_) | Value::Node(_)) {
-                    self.cleanup(node.id);
+                    self.cleanup(
+                        node.id,
+                        span,
+                        Some(receiver.targets().iter().map(Target::dotted).collect()),
+                    );
                 }
             }
         }
         if let Value::Node(node) = &receiver {
             if method == "remove" {
-                self.cleanup(node.id);
+                self.cleanup(node.id, span, None);
             }
             if let Some(symbol) = self.callee_object_symbol(callee) {
                 if method == "setAttribute" {
@@ -478,7 +520,7 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                         for key in &keys {
                             let member = self.member(Value::Targets(vec![base.clone()]), key);
                             for t in member.targets() {
-                                if let Some(rule) = classify_write(t) {
+                                if let Some(rule) = classify_write(t, operation) {
                                     self.finding(
                                         rule,
                                         span,
@@ -781,12 +823,14 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                 }
                 Some(Callback::Binding(symbol))
             }
-            Expression::StaticMemberExpression(_) => self.member_path(expr).map(Callback::Member),
+            Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
+                self.member_path(expr).map(Callback::Member)
+            }
             _ => None,
         }
     }
 
-    fn member_path(&self, expr: &Expression<'_>) -> Option<String> {
+    pub(super) fn member_path(&self, expr: &Expression<'_>) -> Option<String> {
         match expr.get_inner_expression() {
             Expression::ThisExpression(_) => Some("this".into()),
             Expression::Identifier(id) => Some(match self.symbol_of(id) {
@@ -799,12 +843,43 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                 None => id.name.to_string(),
             }),
             Expression::StaticMemberExpression(m) => Some(format!(
-                "{}.{}",
+                "{}[{:?}]",
                 self.member_path(&m.object)?,
-                m.property.name
+                m.property.name.as_str()
+            )),
+            Expression::ComputedMemberExpression(m) => Some(format!(
+                "{}[{}]",
+                self.member_path(&m.object)?,
+                self.reference_property(&m.expression)?
             )),
             _ => None,
         }
+    }
+
+    /// Computed keys retain their binding/projection identity unless a single
+    /// literal key is known. Calls and unknown expressions never share a key.
+    fn reference_property(&self, expression: &Expression<'_>) -> Option<String> {
+        let expression = expression.get_inner_expression();
+        let literal = match expression {
+            Expression::StringLiteral(value) => Some(value.value.to_string()),
+            Expression::NumericLiteral(value) => Some(value.value.to_string()),
+            Expression::TemplateLiteral(value) if value.expressions.is_empty() => value
+                .quasis
+                .first()
+                .and_then(|quasi| quasi.value.cooked.as_ref())
+                .map(ToString::to_string),
+            Expression::Identifier(id) => self
+                .symbol_of(id)
+                .and_then(|symbol| self.values.get(&symbol))
+                .map(Value::strings)
+                .and_then(|keys| (keys.len() == 1).then(|| keys[0].clone())),
+            _ => None,
+        };
+        if let Some(literal) = literal {
+            return Some(format!("{literal:?}"));
+        }
+        self.member_path(expression)
+            .map(|path| format!("ref:{path}"))
     }
 
     /// Identity of one call argument for helper-parameter substitution.

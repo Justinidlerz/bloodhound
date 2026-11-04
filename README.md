@@ -58,22 +58,50 @@ Strings always mean source text. File paths and URLs use explicit source objects
 
 ## Findings
 
-| Rule                   | Examples                                                                        | Default severity |
-| ---------------------- | ------------------------------------------------------------------------------- | ---------------- |
-| `global-write`         | `window.config = …`, classic top-level `var`, sloppy implicit globals           | warning          |
-| `document-write`       | `document.body.className = …`, document attributes                              | warning          |
-| `builtin-mutation`     | `Array.prototype.x = …`, `Object.assign = …`                                    | error            |
-| `host-api-override`    | `window.fetch = …`, `history.pushState = …`                                     | error            |
-| `dom-insertion`        | `document.body.appendChild(…)`, selected element insertion, `document.write(…)` | warning          |
-| `style-injection`      | injected `<style>` or stylesheet `<link>`, adopted stylesheets                  | warning          |
-| `document-style-write` | `document.body.style.overflow = …`                                              | warning          |
-| `global-listener`      | `window.addEventListener(…)`, document listeners                                | warning          |
-| `module-state-write`   | functions/callbacks writing ESM module variables or their properties            | warning          |
-| `html-global-style`    | `<html style="…">`, `<body style="…">`                                          | info             |
+| Rule                   | Examples                                                                           | Default severity |
+| ---------------------- | ---------------------------------------------------------------------------------- | ---------------- |
+| `global-write`         | `window.config = …`, classic top-level `var`, sloppy implicit globals              | warning          |
+| `document-write`       | `document.body.className = …`, document attributes                                 | warning          |
+| `builtin-mutation`     | `Array.prototype.x = …`, `Object.assign = …`                                       | error            |
+| `host-api-override`    | `window.fetch = …`, `history.pushState = …`                                        | error            |
+| `dom-insertion`        | `document.body.appendChild(…)`, selected element insertion, `document.write(…)`    | warning          |
+| `style-injection`      | injected `<style>` or stylesheet `<link>`, adopted stylesheets                     | warning          |
+| `document-style-write` | `document.body.style.overflow = …`                                                 | warning          |
+| `global-listener`      | `window.addEventListener(…)`, document listeners                                   | warning          |
+| `module-state-write`   | module state inherited by React state or suppressing component/model state updates | warning          |
+| `html-global-style`    | `<html style="…">`, `<body style="…">`                                             | info             |
 
 Ordinary element `style=` attributes in SSR markup are not findings. Expected browser state changes such as `document.title`, `document.cookie`, and navigation are excluded. A severity label is a default consumer policy, not proof that code is harmful.
 
-An inserted node is suppressed when it is removed later in the same straight-line block, or inside a returned cleanup function. A listener is suppressed when the same file contains a removal with the same event and handler reference. Conditions, source order, receiver and capture do not affect listener pairing. Handler aliases and arguments passed to local helpers are resolved; matching an event alone is insufficient. Inline anonymous callbacks remain outside the listener rule, and `once`/`signal` options count as their own removal mechanisms. Pairing does not prove that teardown executes.
+Assignments through recognized native state setters are excluded from pollution findings:
+
+| State                       | Examples                                                                                                                                                                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scroll position             | `document.body.scrollTop`, `document.documentElement.scrollLeft`, `document.scrollingElement.scrollTop`, and aliases of these elements                                                                                                                      |
+| Control value and selection | `value`, `valueAsDate`, `valueAsNumber`, `checked`, `indeterminate`, `selected`, `selectedIndex`, `selectionStart`, `selectionEnd`, `selectionDirection`, `files` on a selected control, `document.activeElement`, or `document.forms[name].elements[name]` |
+| Media playback              | `currentTime`, `volume`, `muted`, `playbackRate` on a selected media element or `document.activeElement`                                                                                                                                                    |
+| Current event               | `window.event.cancelBubble`, `window.event.returnValue`, and aliases of the current event                                                                                                                                                                   |
+| Document and navigation     | Existing document state setters and writable `location` components such as `href`, `pathname`, `search`, and `hash`                                                                                                                                         |
+
+This applies to direct/compound assignments, increment/decrement, `Object.assign`, and `Reflect.set` when the receiver is recognized. Property deletion, `Object.defineProperty`/`defineProperties`, method replacement, prototype mutation, and writes to custom global objects remain eligible for findings. Global `style`, `className`, `classList`, `dataset`, and HTML insertion retain their existing rules. Unknown computed property names are not treated as known state setters. See the [scrolling setters](https://drafts.csswg.org/cssom-view/#dom-element-scrolltop), [control state APIs](https://html.spec.whatwg.org/multipage/input.html#common-input-element-apis), [media APIs](https://html.spec.whatwg.org/multipage/media.html#media-elements), and [event state setters](https://dom.spec.whatwg.org/#interface-event).
+
+Recognized acquire/release pairs are excluded automatically:
+
+| Effect                     | Pairing evidence                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Document attributes        | `setAttribute` / `removeAttribute` on the same element and attribute, including opposite conditional branches                                    |
+| Classes                    | `classList.add` / `classList.remove` with matching tokens; every token in a multi-token call must pair                                           |
+| Inline styles              | The same property is removed or reset to an empty value, `auto`, `unset`, `initial`, `revert` or `revert-layer`                                  |
+| DOM and stylesheet nodes   | The same node is inserted and removed, including `parentNode` / `parentElement`, callback cleanup, stable aliases and recognized instance fields |
+| Global and host properties | A captured original value is written back to the same property, including keyed method storage and local instance forwarding helpers             |
+
+Pairing follows lexical identities and class/prototype owners. Different attributes, nodes, classes, handlers and shadowed bindings do not pair. A removal before a later insertion in the same synchronous execution scope leaves that insertion visible. Capturing a value after overwriting it, or restoring it before the replacement in the same scope, is not restoration. Restoring an original object also discards writes to its replacement's own properties. A React unmount or an arbitrary `destroy()` call alone does not establish DOM removal.
+
+With `sourceMaps: true`, embedded original sources also participate in pairing; generated operations from different mapped source files are kept separate. Missing source content, unresolved helpers and unsupported identities retain the finding. A pair recognizes an available release path, including conditional or callback paths; it does not prove that teardown runs or restores every runtime instance.
+
+A listener is suppressed when the same file contains a removal with the same event and handler reference. Conditions, source order, receiver and capture do not affect listener pairing. Handler aliases and arguments passed to local helpers are resolved; matching an event alone is insufficient. Inline anonymous callbacks remain outside the listener rule, and `once`/`signal` options count as their own removal mechanisms.
+
+Inline `forEach` callbacks over the same collection or fully known literal event arrays pair by iteration source, independently of callback parameter names. This includes `Object.entries`, `Object.keys`, `Object.values`, destructured items and computed handler references such as `handlers[eventName]`. Different collection bindings, different item projections or handlers, and unknown collection-producing calls remain unpaired. A partial removal list does not suppress an entire registration loop. Class listener facades and callbacks stored under the same event key in a local map/object also participate in pairing. Default-valued callback parameters and computed destructuring keys do not establish an item identity. Matching collection references does not prove that their contents stay unchanged at runtime.
 
 The scan follows scripts belonging to the current document. Iframe and `srcdoc` references are listed as `not-followed / iframe-isolated-global`; their child documents and scripts are not loaded or analyzed. SVG/MathML contents are skipped with a coverage gap, and ordinary HTML after a self-closing foreign element remains eligible for scanning.
 
@@ -81,37 +109,78 @@ Findings of the same rule within one resource and one original source line are g
 
 For groups, `writes` preserves every operation's target, operation, confidence, location, snippet, detail and polyfill metadata. Top-level position fields describe the first operation; group confidence is `medium` if any operation is `medium`. Summaries and plugin diagnostics count grouped records. Playground provides a position selector for all operations in each group.
 
+### Static finding refinements
+
+These refinements run by default over the resources already included in the scan. They remove a finding only when its generated code provides the required evidence; no package-name exclusions or extra configuration are needed.
+
+| Pattern                   | Behavior and boundary                                                                                                                                                                                                                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unreachable branch        | Stable local constants can prove an `if`, conditional expression or short-circuit arm unreachable. Mutable or unknown values retain the finding.                                                                                                                                                                      |
+| CommonJS factory callback | A local or directly imported factory must resolve to a closure calling its callback with fresh object arguments. Those actual arguments can prove a UMD fallback unreachable. Unknown factories, re-exports and replaced/escaped callback parameters remain unresolved.                                               |
+| Null listener             | `addEventListener` with a resolved `null` or `undefined` callback has no listener finding. Argument expressions, getters and their other findings remain analyzed.                                                                                                                                                    |
+| Storage data key          | A computed assignment to `localStorage`/`sessionStorage` whose string key necessarily contains a dot is data storage, not a native API override. Unknown keys, native method/property replacement, definitions and deletion retain their existing classification. This does not classify persistent data as harmless. |
+| Symbol tag fallback       | A string written to a standard prototype's resolved `Symbol.toStringTag` key under a matching missing-property guard is marked `polyfill`. Availability-guarded key aliases also need a truthy guard. Unconditional writes, shadowed symbols and mismatched targets remain visible.                                   |
+
+These are bounded source proofs, not general JavaScript execution. Incomplete parsing, exhausted analysis budgets or direct `eval` prevent refinement; original findings remain. Dependencies and existing coverage gaps are preserved. Grouped records disappear only when all their operations are removed; mixed records retain their other operations.
+
 ### ESM module state
 
-ESM module initialization runs once per module instance. Reusing the same module in a document does not reset its variables when a page or component mounts again. `module-state-write` records assignments, updates, destructuring, and property writes/deletes from functions or callbacks to module-level `let` bindings. `var` and `const` bindings are excluded from this rule, including mutations of `const` objects:
+`module-state-write` focuses on state that a later React component instance can inherit from a cached ESM module. It reports writes to module-level `let` bindings only when one of these relationships is resolved:
+
+| Pattern                   | Required evidence                                                                                                                                                                                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inherited component state | A module value flows into a `useState` or `useReducer` initializer and is written by the same component, its callbacks or local helpers.                                                                                                                                          |
+| Skipped component update  | A module value controls an empty early return before a resolved React state setter or reducer dispatch in a component callback or local helper.                                                                                                                                   |
+| Skipped model update      | A module value controls an empty early return before `this.method(payload)` in a factory descriptor, and is written later in that action or its local callbacks. The descriptor contains an initial object and a unique matching reducer that returns `{ ...state, ...payload }`. |
 
 ```jsx
-let ready = false;
-export const App = () => {
-  useEffect(() => {
-    ready = true; // module-state-write, warning
-  }, []);
-  return ready ? <Page /> : <Loading />;
-};
+import { useState } from 'react';
+
+let remembered = false;
+export function App() {
+  const [ready, setReady] = useState(remembered);
+  const confirm = () => {
+    remembered = true; // module-state-write: reused by a later mount
+    setReady(true);
+  };
+  return <button onClick={confirm}>{String(ready)}</button>;
+}
 ```
 
-Use `scriptMode: 'module'` for JavaScript/JSX source. The plugin derives this mode from ESM output; HTML uses `<script type="module">`. Findings point to the write and retain the existing source-map preview support. Read-only declarations, function declarations, bindings initialized with function/arrow literals, writes during module evaluation/direct initialization IIFEs, imported bindings, and function-local or shadowed variables are excluded. A binding initialized without a function, then assigned a callback later, remains eligible. Classic scripts retain their existing rules.
+Use `scriptMode: 'module'` for JavaScript/JSX source. The plugin derives the mode from ESM output; HTML uses `<script type="module">`. No additional option is required. Other pollution rules keep their existing scope.
 
-`module-state-write` also excludes resources under `node_modules`, identified from the resource path or a mapped original source path. Sourcemap paths are sufficient for this exclusion even without embedded source content. Other rules continue to report mutations in dependencies.
+Hook identities are resolved from `react` imports, including named aliases and default/namespace imports. The rule follows stable local aliases, lazy initializers, local custom-hook wrappers, helper arguments and returned values. Reducer initializer functions must resolve; an unknown initializer may discard its input. A scalar snapshot captured during module evaluation does not become a live reference to its source binding.
 
-Recognized global-object aliases use the global mutation rules instead of `module-state-write`. This includes `document.defaultView` and simple synchronous IIFEs returning a global object through direct returns, conditional branches, or `try`/`catch`. Sourcemap analysis also corrects module-state candidates whose original source identifies a global mutation. Unknown return paths remain unresolved.
+Model matching uses local object structure and parameter bindings, without requiring particular factory, package or method names. It follows direct calls and local async arrow callbacks. These findings have `medium` confidence: verify that the factory binds the receiver to the reducer and creates a fresh store on remount. A module flag can outlive that store and prevent refilling its data. A singleton initialization flag alone does not qualify; resources retained alongside the flag are not evidence of lost page state.
 
-With `sourceMaps: true` and embedded `sourcesContent`, the Rust scanner checks mapped writes against the original JavaScript/TypeScript module. Declarations lowered into lazy initialization assignments are excluded, including constant values and function declarations. Later assignments, updates and property mutations of `let` bindings remain candidates. The original declaration determines eligibility, so `let` writes remain eligible even when emitted as `var`. Without usable original source content, the rule uses the generated declaration kind and retains only `let` bindings.
+A value refreshed before the initializer or guard is excluded when the assignment dominates that use. Recognized synchronous effect cleanup that restores the same binding, and complete `try/finally` resets for temporary guards, also exclude the matching pattern. An unrelated reset function or a conditional reset before use does not establish that restoration occurs. Existing initialization-only and paired-cleanup exclusions still apply.
 
-Each module-state finding includes `declaration: { name, location }` for its lexical binding. Both the write and definition retain generated positions and original source positions when available. Playground can switch between them and highlight the declaration identifier in the original source.
+Ordinary shared writes do not produce this finding: caches, counters, telemetry context, retry timestamps and singleton markers need the same positive component-state evidence. An `if (initialized) return` alone is insufficient. This is a precision-oriented scope: absence of a finding does not prove that shared state is safe, that requests finish, or that cleanup executes.
 
-Multiple writes to the same declaration within one resource produce one finding, even across different lines. Playground lists the binding once and lets users switch between all write locations and its declaration.
+| Boundary          | Behavior                                                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binding scope     | Only module-level `let` assignments/updates participate. `var`, `const`, property mutations, local/shadowed bindings, imported bindings and writes during module initialization are outside this rule.                                                                                                            |
+| Dependencies      | Resources or original source paths under `node_modules` are excluded from this rule; other rules still inspect their effects.                                                                                                                                                                                     |
+| Source maps       | With `sourceMaps: true` and embedded `sourcesContent`, original JavaScript/TypeScript supplies hook identities and declaration kinds, including `let` emitted as `var`. Without it, only relationships recognizable in generated code are reported.                                                               |
+| Unsupported flows | Opaque imported helpers, unresolved custom hooks, state containers without the local merge-reducer pattern, arbitrary instance initialization, object-property flows and unresolved cross-resource value flows are not reported. Dynamic/spread descriptor keys and nonlocal reducers are outside model matching. |
+| Analysis limits   | Parse/budget failures in the positive pass produce `module-state-analysis-incomplete`; unconfirmed module-state writes are omitted. Existing scan gaps remain visible.                                                                                                                                            |
 
-This warning identifies persistent state, not a proven lifecycle bug. A separate reset function does not suppress it because static scanning does not establish that every page entry or teardown calls that function. Writes through aliases, opaque helper calls, collection methods, and state enclosed by module-initialization factories are not inferred by this rule. Keep per-instance state inside the component/page instance, or explicitly reset shared state in its lifecycle.
+Each finding includes `declaration: { name, location }`, generated/original write locations and a `detail` explaining the matched relationship. Multiple writes to one declaration within a resource produce one record with `writes`. Playground can switch between the definition and write sites. Severity remains `warning`; resolved data-flow confidence does not confirm a runtime lifecycle defect.
 
 ### Conditional polyfills
 
 API fallbacks installed behind a missing-native check carry `polyfill` metadata. This includes JavaScript builtins, browser APIs and grouped installations such as fetch with Request, Response and Headers. Playground hides identified polyfills by default, independently of browser targets, with an option to show them. Code, raw findings and severity counts are preserved. Unconditional overrides, monitoring wrappers and unrecognized checks remain visible.
+
+| Supported check or installation                                                                     | Behavior                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `!window.fetch`, `typeof fetch === 'undefined'`, `typeof fetch !== 'function'`                      | Identifies the branch that installs the missing or non-callable API.                                                                                                                                                                                                             |
+| `!('fetch' in window)`                                                                              | Resolves a known property on a global or native API object, including aliases.                                                                                                                                                                                                   |
+| `typeof window !== 'undefined' && !window.setImmediate`                                             | Uses the missing-API condition within a conjunction.                                                                                                                                                                                                                             |
+| `if (nativeCapabilitiesAvailable) return;` followed by installation                                 | Carries the opposite condition through the remaining statements in the same block. Compound AND/OR capability checks can guard a fallback bundle.                                                                                                                                |
+| `for (...; ... && !window.requestAnimationFrame; ...)` and `while (!nativeApi)`                     | Applies the missing-API condition to the loop body and the for-loop update, excluding the initializer and following statements.                                                                                                                                                  |
+| Function and API-reference assignments, synchronous factories, function-valued property descriptors | Recognizes constructor/method installations, vendor implementation aliases and missing getters such as `isIntersecting`. Factories must resolve to a function or return a statically resolved API reference. Synchronous setup can also install companion APIs before returning. |
+
+A disjunction such as `!window.fetch || force` does not prove that a native capability is missing and stays visible. Guards do not cross deferred function boundaries. A loop condition does not establish a guard after the loop; the first `do...while` iteration has no preceding condition. Early returns inside loops, `throw` and `try/finally` do not establish a continuation guard. Unknown property names and custom global APIs remain visible. A capability bundle can replace an existing member when another checked capability is missing; `guardTarget` names a checked API, not a guarantee that every member was absent. Other side effects inside a fallback retain their existing findings.
 
 ## Manifest v2
 

@@ -81,29 +81,35 @@ export function SourcePreview({ index, row, originals, components, customLoader 
   const { Button, Input } = components;
   const source = row.source ? index.sources.get(row.source) : undefined;
   const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
-  const [link, setLink] = useState('');
-  const [error, setError] = useState('');
-  const [preview, setPreview] = useState<PreviewRequest>();
-  const [writeIndex, setWriteIndex] = useState(0);
-  const [reference, setReference] = useState(() => source && originals.reference(source));
   const writes = writeRows(row);
   const moduleState = row.type === 'module-state-write';
+  const initialPoint = moduleState && declaration ? 'declaration' : 'write';
+  const [link, setLink] = useState('');
+  const [error, setError] = useState('');
+  const [reference, setReference] = useState(() => source && originals.reference(source));
+  const [preview, setPreview] = useState<PreviewRequest | undefined>(() =>
+    reference && 'location' in row.data && row.data.location
+      ? originalPreview(initialPoint, 0)
+      : generatedPreview(initialPoint, 0),
+  );
+  const [writeIndex, setWriteIndex] = useState(0);
   const writeRow = writes[writeIndex]!;
   const location = 'location' in writeRow.data ? writeRow.data.location : undefined;
   const hasPosition = source && location;
   const point = preview?.point ?? 'write';
   const activeRow = point === 'declaration' ? (declarationRow(writeRow) ?? writeRow) : writeRow;
+  const activeLocation = 'location' in activeRow.data ? activeRow.data.location : undefined;
   const target = viewerTarget(index, activeRow, originals.workspace, customLoader);
   const declarationPosition = declaration?.location.original ?? declaration?.location;
 
-  function showOriginal(
-    point: PreviewRequest['point'] = preview?.point ?? 'write',
-    write = writeIndex,
-  ) {
+  function originalPreview(
+    point: PreviewRequest['point'],
+    write: number,
+  ): PreviewRequest | undefined {
     const selected = writes[write]!;
     const location = 'location' in selected.data ? selected.data.location : undefined;
     if (!source || !location) return;
-    setPreview({
+    return {
       kind: 'original',
       point,
       write,
@@ -115,18 +121,18 @@ export function SourcePreview({ index, row, originals, components, customLoader 
         await originals.preview(selected.id, source, location, retry);
         return originals.previews.get(selected.id)!;
       },
-    });
+    };
   }
 
-  function showGenerated(
-    point: PreviewRequest['point'] = preview?.point ?? 'write',
-    write = writeIndex,
-  ) {
+  function generatedPreview(
+    point: PreviewRequest['point'],
+    write: number,
+  ): PreviewRequest | undefined {
     const selected = writes[write]!;
     const selectedRow = point === 'declaration' ? (declarationRow(selected) ?? selected) : selected;
     const target = viewerTarget(index, selectedRow, originals.workspace, customLoader);
     if (!target) return;
-    setPreview({
+    return {
       kind: 'generated',
       point,
       write,
@@ -143,14 +149,16 @@ export function SourcePreview({ index, row, originals, components, customLoader 
           location: target.location,
         };
       },
-    });
+    };
   }
 
   function selectPoint(point: PreviewRequest['point'], write = writeIndex) {
     setWriteIndex(write);
-    setPreview(undefined);
-    if (preview?.kind === 'generated' || !reference) showGenerated(point, write);
-    else showOriginal(point, write);
+    setPreview(
+      preview?.kind === 'generated' || !reference
+        ? generatedPreview(point, write)
+        : originalPreview(point, write),
+    );
   }
 
   function associate() {
@@ -159,7 +167,7 @@ export function SourcePreview({ index, row, originals, components, customLoader 
       originals.link(source, link);
       setReference(originals.reference(source));
       setError('');
-      showOriginal();
+      setPreview(originalPreview(point, writeIndex));
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
@@ -167,6 +175,14 @@ export function SourcePreview({ index, row, originals, components, customLoader 
 
   return (
     <div className="bh-source-preview">
+      {activeLocation ? (
+        <p>
+          {t('record.position', {
+            line: activeLocation.line,
+            column: activeLocation.column,
+          })}
+        </p>
+      ) : null}
       {writes.length > 1 ? (
         <p>{t(moduleState ? 'record.writes' : 'record.occurrences', { count: writes.length })}</p>
       ) : null}
@@ -213,26 +229,12 @@ export function SourcePreview({ index, row, originals, components, customLoader 
           ) : null}
         </div>
       ) : null}
-      {writes.length > 1 && 'snippet' in writeRow.data ? (
-        <>
-          <p>{writeRow.data.target}</p>
-          {writeRow.data.detail ? <p>{writeRow.data.detail}</p> : null}
-          {writeRow.data.polyfill ? (
-            <p>
-              {t('polyfill.detail', {
-                target: writeRow.data.polyfill.guardTarget ?? writeRow.data.target,
-              })}
-            </p>
-          ) : null}
-          <pre className="bh-snippet">{writeRow.data.snippet}</pre>
-        </>
-      ) : null}
       <div className="bh-controls bh-preview-switch" aria-label={t('source.mode')}>
         {target ? (
           <Button
             variant="toggle"
             aria-pressed={preview?.kind === 'generated'}
-            onClick={() => showGenerated()}
+            onClick={() => setPreview(generatedPreview(point, writeIndex))}
           >
             {t('source.generated')}
           </Button>
@@ -241,12 +243,21 @@ export function SourcePreview({ index, row, originals, components, customLoader 
           <Button
             variant="toggle"
             aria-pressed={preview?.kind === 'original'}
-            onClick={() => showOriginal()}
+            onClick={() => setPreview(originalPreview(point, writeIndex))}
           >
             {t('source.original')}
           </Button>
         ) : null}
       </div>
+      {preview ? (
+        <Preview
+          key={`${preview.write}:${preview.point}:${preview.kind}`}
+          load={preview.load}
+          components={components}
+        />
+      ) : 'snippet' in writeRow.data ? (
+        <pre className="bh-snippet">{writeRow.data.snippet}</pre>
+      ) : null}
       {hasPosition ? (
         <details>
           <summary>{t('source.association')}</summary>
@@ -270,7 +281,7 @@ export function SourcePreview({ index, row, originals, components, customLoader 
                 onClick={() => {
                   originals.unlink(source);
                   setReference(undefined);
-                  setPreview(undefined);
+                  setPreview(generatedPreview(point, writeIndex));
                   setError('');
                   setLink('');
                 }}
@@ -281,13 +292,6 @@ export function SourcePreview({ index, row, originals, components, customLoader 
           </div>
           {error ? <p role="alert">{t('source.error', { message: error })}</p> : null}
         </details>
-      ) : null}
-      {preview ? (
-        <Preview
-          key={`${preview.write}:${preview.point}:${preview.kind}`}
-          load={preview.load}
-          components={components}
-        />
       ) : null}
     </div>
   );

@@ -200,6 +200,17 @@ pub fn run(request: &Request, flag: Arc<AtomicBool>) -> Result<Graph, String> {
     coordinator.drive(&pool);
     drop(pool);
 
+    js::prune_initialization(
+        &mut coordinator.resources,
+        options.budgets.max_steps,
+        &cancel,
+    );
+    js::prune_static(
+        &mut coordinator.resources,
+        options.budgets.max_steps,
+        &cancel,
+    );
+
     let cancelled = cancel.is_cancelled();
     Ok(Graph {
         bytes: coordinator.bytes,

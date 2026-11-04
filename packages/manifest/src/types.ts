@@ -22,7 +22,7 @@ export type DependencyMode = 'single' | 'recursive';
  * | `style-injection`      | `<style>`/`<link>` inserted by script without removal               |
  * | `document-style-write` | `document.body.style.x = …`, `documentElement.style.setProperty(…)` |
  * | `global-listener`      | `window.addEventListener(…)` without `removeEventListener`          |
- * | `module-state-write`   | function/callback writes to cached ESM module state                |
+ * | `module-state-write`   | module state inherited by React state or guarding component/model updates    |
  * | `html-global-style`    | `style=` attribute on `<html>`/`<body>`                             |
  */
 export type Rule =
@@ -130,7 +130,7 @@ export interface ManifestFinding {
   /** API fallback identified by the scanner, independent of browser targets. */
   polyfill?: {
     guard: 'missing' | 'not-function';
-    /** Native API checked before installation; e.g. fetch guards a fetch/Request/Response bundle. */
+    /** Native API participating in the check; a bundle can be installed when any checked capability is missing. */
     guardTarget?: string;
   };
 }

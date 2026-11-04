@@ -132,23 +132,23 @@ fn cleanup_requires_identity_order_and_paired_removal() {
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); function dispose(){s.remove()}",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); if(ok)s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); ok && s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); while(ok)s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); switch(x){case 1:s.remove();}",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); const alias=s; document.head.appendChild(s); alias.remove();",
@@ -305,12 +305,9 @@ fn function_analysis_does_not_execute_captured_assignments() {
     );
     assert_eq!(
         finding_pairs(&a),
-        vec![
-            (Rule::ModuleStateWrite, "g".into()),
-            (Rule::GlobalWrite, "window.shared".into()),
-        ]
+        vec![(Rule::GlobalWrite, "window.shared".into())]
     );
-    assert_eq!(a.findings[1].confidence, Confidence::Medium);
+    assert_eq!(a.findings[0].confidence, Confidence::Medium);
 }
 
 #[test]

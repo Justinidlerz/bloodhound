@@ -90,6 +90,9 @@ pub const HOST_APIS: &[&str] = &[
     "setInterval",
     "clearTimeout",
     "clearInterval",
+    // Legacy host timers still installed by browser compatibility libraries.
+    "setImmediate",
+    "clearImmediate",
     "requestAnimationFrame",
     "cancelAnimationFrame",
     "requestIdleCallback",
@@ -112,6 +115,7 @@ pub const HOST_APIS: &[&str] = &[
     "CustomEvent",
     "MutationObserver",
     "IntersectionObserver",
+    "IntersectionObserverEntry",
     "ResizeObserver",
     "PerformanceObserver",
     "performance",
@@ -202,6 +206,36 @@ pub const BENIGN_WINDOW_WRITES: &[&str] = &[
 /// `document.<name>` properties where assignment is the intended API and
 /// has only document-local effect. Not reported.
 pub const BENIGN_DOCUMENT_WRITES: &[&str] = &["cookie", "title", "domain", "designMode", "dir"];
+
+/// Native element setters that change the current scroll position.
+pub const ELEMENT_SCROLL_WRITES: &[&str] = &["scrollTop", "scrollLeft"];
+
+/// Current form-control value, checkedness and text selection, not event handlers
+/// or default attributes that alter subsequent behavior.
+pub const CONTROL_STATE_WRITES: &[&str] = &[
+    "value",
+    "valueAsDate",
+    "valueAsNumber",
+    "checked",
+    "indeterminate",
+    "selected",
+    "selectedIndex",
+    "selectionStart",
+    "selectionEnd",
+    "selectionDirection",
+    "files",
+];
+
+/// Current media playback state, rather than replacing the media API.
+pub const MEDIA_STATE_WRITES: &[&str] = &["currentTime", "volume", "muted", "playbackRate"];
+
+/// Flags that only affect propagation or cancellation of the current event.
+pub const EVENT_STATE_WRITES: &[&str] = &["cancelBubble", "returnValue"];
+
+/// Writable navigation components. Methods and custom properties are not setters.
+pub const LOCATION_STATE_WRITES: &[&str] = &[
+    "href", "protocol", "host", "hostname", "port", "pathname", "search", "hash",
+];
 
 /// Methods that insert nodes or markup into their receiver.
 pub const INSERTION_METHODS: &[&str] = &[

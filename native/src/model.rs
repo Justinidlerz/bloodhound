@@ -267,7 +267,7 @@ pub enum Rule {
     /// or a top-level `var`/`function` declaration in a classic script.
     GlobalWrite,
     /// A write to a property of `document` or a well-known document node
-    /// such as `document.title = ...` or `document.body.className = ...`.
+    /// such as `document.body.className = ...`, excluding native state setters.
     DocumentWrite,
     /// Mutation of a built-in prototype or constructor:
     /// `Array.prototype.foo = ...`, `Promise.allSettled = ...`.
@@ -330,7 +330,8 @@ pub enum Confidence {
     /// (direct reference or a const alias), or resolves to a module binding.
     High,
     /// The receiver was tracked through a mutable alias or a conditional
-    /// branch, so a runtime reassignment could change the target.
+    /// branch, or a model dispatch was matched structurally without resolving
+    /// the factory's receiver binding and instance lifetime.
     Medium,
 }
 

@@ -4,8 +4,8 @@
 //! stack, binds `var`/`const` values, follows IIFE arguments into
 //! parameters, and records module dependencies.
 
-use super::Analyzer;
-use super::values::Value;
+use super::values::{Root, Value};
+use super::{Analyzer, Callback};
 use crate::model::{DependencyKind, ScriptMode, Span};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
@@ -74,6 +74,108 @@ fn literal_type(e: &Expression<'_>) -> Option<&'static str> {
 }
 
 impl<'s, 'c> Analyzer<'s, 'c> {
+    /// A callback item is a projection of its collection, independent of the
+    /// callback's parameter name or lexical symbol in another forEach call.
+    fn bind_iteration_pattern(&mut self, pattern: &BindingPattern<'_>, path: &str) {
+        match pattern {
+            BindingPattern::BindingIdentifier(id) => {
+                if let Some(symbol) = id.symbol_id.get() {
+                    self.aliases.insert(symbol, Callback::Member(path.into()));
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (index, item) in array.elements.iter().enumerate() {
+                    if let Some(item) = item {
+                        self.bind_iteration_pattern(
+                            item,
+                            &format!("{path}[{:?}]", index.to_string()),
+                        );
+                    }
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    if property.computed {
+                        continue;
+                    }
+                    if let Some(key) = property.key.static_name() {
+                        self.bind_iteration_pattern(
+                            &property.value,
+                            &format!("{path}[{:?}]", key.as_ref()),
+                        );
+                    }
+                }
+            }
+            // Defaults can replace the item with an unrelated reference.
+            BindingPattern::AssignmentPattern(_) => {}
+        }
+    }
+
+    fn iteration_source(&mut self, expression: &Expression<'_>) -> Option<String> {
+        if let Some(path) = self.member_path(expression) {
+            return Some(path);
+        }
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
+            return None;
+        };
+        let method = member.property.name.as_str();
+        if !matches!(method, "entries" | "keys" | "values") {
+            return None;
+        }
+        let uncertain = self.uncertain;
+        let receiver = self.eval(&member.object);
+        self.uncertain = uncertain;
+        if !matches!(receiver.targets(), [target] if target.root == Root::Builtin("Object") && target.path.is_empty())
+        {
+            return None;
+        }
+        let source = self.member_path(call.arguments.first()?.as_expression()?)?;
+        Some(format!("Object.{method}({source})"))
+    }
+
+    fn visit_for_each(&mut self, call: &CallExpression<'_>) -> bool {
+        let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
+            return false;
+        };
+        if member.property.name != "forEach" {
+            return false;
+        }
+        let Some(callback) = call.arguments.first().and_then(Argument::as_expression) else {
+            return false;
+        };
+        let params = match callback.get_inner_expression() {
+            Expression::FunctionExpression(function) => &function.params,
+            Expression::ArrowFunctionExpression(function) => &function.params,
+            _ => return false,
+        };
+        let Some(source) = self.iteration_source(&member.object) else {
+            return false;
+        };
+        self.rule_call(call);
+        self.visit_expression(&call.callee);
+        let aliases = self.aliases.clone();
+        for (index, param) in params.items.iter().take(3).enumerate() {
+            if param.initializer.is_some() {
+                continue;
+            }
+            let path = if index == 2 {
+                source.clone()
+            } else {
+                format!("forEach({source})[{index}]")
+            };
+            self.bind_iteration_pattern(&param.pattern, &path);
+        }
+        self.visit_argument(&call.arguments[0]);
+        self.aliases = aliases;
+        for argument in call.arguments.iter().skip(1) {
+            self.visit_argument(argument);
+        }
+        true
+    }
+
     /// Binds the parameters of an immediately-invoked function to the
     /// abstract values of its arguments so UMD/bundler wrappers resolve.
     fn bind_iife_params(&mut self, params: &FormalParameters<'_>, args: &[Argument<'_>]) {
@@ -242,6 +344,21 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         walk::walk_statement(self, stmt);
     }
 
+    fn visit_statements(&mut self, statements: &oxc_allocator::Vec<'a, Statement<'a>>) {
+        let guards = self.polyfill_guards.len();
+        for statement in statements {
+            if self.exhausted {
+                break;
+            }
+            let continuation = self.polyfill_continuation_guard(statement);
+            self.visit_statement(statement);
+            if let Some(guard) = continuation {
+                self.polyfill_guards.push(guard);
+            }
+        }
+        self.polyfill_guards.truncate(guards);
+    }
+
     // ----- declarations ---------------------------------------------------
 
     fn visit_variable_declarator(&mut self, decl: &VariableDeclarator<'a>) {
@@ -308,7 +425,9 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         let depth = std::mem::replace(&mut self.conditional_depth, 0);
         self.this_stack.push(this);
         self.fn_stack.push(owner);
+        let function_scope = std::mem::replace(&mut self.function_scope, func.span().start + 1);
         walk::walk_function(self, func, flags);
+        self.function_scope = function_scope;
         self.fn_stack.pop();
         self.this_stack.pop();
         self.conditional_depth = depth;
@@ -342,7 +461,9 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         let depth = std::mem::replace(&mut self.conditional_depth, 0);
         let block = std::mem::replace(&mut self.block, func.span.start + 1);
         self.fn_stack.push(owner);
+        let function_scope = std::mem::replace(&mut self.function_scope, func.span.start + 1);
         walk::walk_arrow_function_expression(self, func);
+        self.function_scope = function_scope;
         self.fn_stack.pop();
         self.block = block;
         self.conditional_depth = depth;
@@ -446,13 +567,35 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
 
     fn visit_while_statement(&mut self, stmt: &WhileStatement<'a>) {
         self.conditional_depth += 1;
-        walk::walk_while_statement(self, stmt);
+        self.visit_expression(&stmt.test);
+        let guards = self.polyfill_guards.len();
+        if let Some(guard) = self.polyfill_guard(&stmt.test, true) {
+            self.polyfill_guards.push(guard);
+        }
+        self.visit_statement(&stmt.body);
+        self.polyfill_guards.truncate(guards);
         self.conditional_depth -= 1;
     }
 
     fn visit_for_statement(&mut self, stmt: &ForStatement<'a>) {
         self.conditional_depth += 1;
-        walk::walk_for_statement(self, stmt);
+        // The initializer runs before the first test. Only the body and update
+        // are reached through the test's true branch; never carry it past the loop.
+        if let Some(init) = &stmt.init {
+            self.visit_for_statement_init(init);
+        }
+        let guards = self.polyfill_guards.len();
+        if let Some(test) = &stmt.test {
+            self.visit_expression(test);
+            if let Some(guard) = self.polyfill_guard(test, true) {
+                self.polyfill_guards.push(guard);
+            }
+        }
+        self.visit_statement(&stmt.body);
+        if let Some(update) = &stmt.update {
+            self.visit_expression(update);
+        }
+        self.polyfill_guards.truncate(guards);
         self.conditional_depth -= 1;
     }
 
@@ -485,6 +628,7 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
     }
 
     fn visit_assignment_expression(&mut self, a: &AssignmentExpression<'a>) {
+        let factory = self.enter_polyfill_factory(a);
         let assigned = match &a.left {
             AssignmentTarget::AssignmentTargetIdentifier(id) => self.symbol_of(id),
             _ => None,
@@ -497,6 +641,7 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
         } else {
             self.visit_expression(&a.right);
         }
+        self.leave_polyfill_factory(factory);
         if a.operator.as_str() == "=" {
             if let Some(symbol) = assigned {
                 self.record_alias(symbol, &a.right);
@@ -598,6 +743,9 @@ impl<'a, 's, 'c> Visit<'a> for Analyzer<'s, 'c> {
                 }
             }
             _ => {}
+        }
+        if self.visit_for_each(c) {
+            return;
         }
         self.rule_call(c);
         walk::walk_call_expression(self, c);

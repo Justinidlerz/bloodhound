@@ -1,7 +1,7 @@
 //! Writes to ESM module state from functions that can outlive page instances.
 //! Module evaluation and direct IIFEs are initialization, not later writes.
 
-use super::{Analyzer, JsOptions, analyze_as, values::Value};
+use super::{Analyzer, JsOptions, analyze_as_with_sources, values::Value};
 use crate::lines::LineIndex;
 use crate::model::{Analysis, BindingDeclaration, OriginalLocation, Rule, ScriptMode, Span};
 use crate::scheduler::Cancellation;
@@ -9,6 +9,11 @@ use oxc_ast::ast::*;
 use oxc_span::SourceType;
 use oxc_syntax::symbol::SymbolId;
 use std::collections::HashMap;
+
+pub(super) mod focus;
+pub(crate) mod initialization;
+mod patterns;
+pub(super) use patterns::prune as prune_patterns;
 
 /// Bundlers can lower declarations to assignments inside lazy module
 /// initializers. A mapped assignment is a persistent-state write only when
@@ -54,7 +59,13 @@ pub(super) fn refine(
                 let source_type = SourceType::from_path(name)
                     .unwrap_or_else(|_| SourceType::mjs().with_jsx(true))
                     .with_module(true);
-                let original = analyze_as(view.source(), source_type, options, cancel);
+                let original = analyze_as_with_sources(
+                    view.source(),
+                    source_type,
+                    options,
+                    cancel,
+                    Some((map, name)),
+                );
                 if original.gaps.iter().any(|gap| {
                     matches!(
                         gap.reason.as_str(),
