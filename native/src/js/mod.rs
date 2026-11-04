@@ -12,16 +12,24 @@
 //! * records gaps for constructs it cannot see through (`eval`, `with`,
 //!   unknown dynamic URLs, budget exhaustion).
 //!
-//! The analyzer never executes code and never follows calls into other
-//! functions except immediately-invoked function expressions, whose
-//! parameters are bound to the argument values so UMD and bundler wrappers
-//! such as `(function (root) { root.lib = … })(window)` resolve correctly.
+//! The analyzer never executes code. Abstract global-object evaluation follows
+//! immediately-invoked function arguments so UMD/bundler wrappers resolve.
+//! Module-state exclusions additionally inspect bounded helper-call summaries
+//! for cleanup pairs, successful module-loading results and initialization-only
+//! calls across the resolved resource graph.
 
 mod builtins;
+mod cleanup_pairs;
 mod eval;
+mod module_state;
+mod polyfill;
 mod rules;
+mod static_filter;
 mod values;
 mod visitor;
+
+pub(crate) use module_state::initialization::prune as prune_initialization;
+pub(crate) use static_filter::prune as prune_static;
 
 use crate::model::{
     Analysis, Confidence, Dependency, DependencyKind, Finding, Gap, Rule, ScriptMode, Span,
@@ -53,12 +61,40 @@ pub struct JsOptions {
 pub const PARSER_VERSION: &str = "oxc-0.154.0";
 
 /// Parses and analyzes one JavaScript resource.
-pub fn analyze(source: &str, options: &JsOptions, cancel: &Cancellation) -> Analysis {
-    let allocator = Allocator::default();
+pub fn analyze(
+    source: &str,
+    options: &JsOptions,
+    cancel: &Cancellation,
+    map: Option<&sourcemap::DecodedMap>,
+) -> Analysis {
     let source_type = match options.script_mode {
-        ScriptMode::Module => SourceType::mjs(),
+        ScriptMode::Module => SourceType::mjs().with_jsx(true),
         ScriptMode::Classic => SourceType::cjs().with_script(true),
     };
+    let mut analysis = analyze_as(source, source_type, options, cancel);
+    module_state::refine(&mut analysis, source, map, options, cancel);
+    module_state::focus::retain(&mut analysis, source, source_type, map, options, cancel);
+    cleanup_pairs::prune(&mut analysis, source, source_type, options, cancel, map);
+    analysis
+}
+
+fn analyze_as(
+    source: &str,
+    source_type: SourceType,
+    options: &JsOptions,
+    cancel: &Cancellation,
+) -> Analysis {
+    analyze_as_with_sources(source, source_type, options, cancel, None)
+}
+
+fn analyze_as_with_sources(
+    source: &str,
+    source_type: SourceType,
+    options: &JsOptions,
+    cancel: &Cancellation,
+    sources: Option<(&sourcemap::DecodedMap, &str)>,
+) -> Analysis {
+    let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     let mut analysis = Analysis::default();
     if parsed.fatal_error || parsed.diagnostics.has_errors() {
@@ -76,13 +112,15 @@ pub fn analyze(source: &str, options: &JsOptions, cancel: &Cancellation) -> Anal
         return analysis;
     }
     let semantic = SemanticBuilder::new()
-        .with_build_nodes(false)
+        .with_build_nodes(true)
         .with_check_syntax_error(false)
         .build(&parsed.program);
     let scoping = semantic.semantic.scoping();
     let mut analyzer = Analyzer::new(scoping, options, cancel);
     analyzer.visit_program(&parsed.program);
-    analyzer.finish()
+    let mut analysis = analyzer.finish();
+    module_state::prune_patterns(&mut analysis, &semantic.semantic, options, cancel, sources);
+    analysis
 }
 
 /// A finding whose validity depends on later statements in the same file
@@ -93,6 +131,7 @@ struct Deferred {
     node: Option<u32>,
     listener: Option<ListenerKey>,
     block: u32,
+    function_scope: u32,
     unconditional: bool,
     /// Binding of the local function this effect was recorded in, when it
     /// has one; used to substitute helper parameters at call sites.
@@ -161,9 +200,17 @@ pub(crate) struct Analyzer<'s, 'c> {
     /// Whether the root scope is strict (`"use strict"` or module).
     strict: bool,
     findings: Vec<Finding>,
+    polyfill_guards: Vec<polyfill::Guard>,
     deferred: Vec<Deferred>,
+    /// Node allocation id -> removal sites (scope, offset, known parent targets).
+    /// Callback definitions can precede insertion, so DOM pairing is finalized
+    /// after the entire resource has been visited.
+    node_removals: HashMap<u32, Vec<(u32, u32, Option<Vec<String>>)>>,
     listener_removals: Vec<ListenerRemoval>,
-    /// Cleanup is only proven within the same straight-line block.
+    /// Current synchronous execution scope; callback/function bodies get their
+    /// own identity, while direct IIFEs retain their caller's scope.
+    function_scope: u32,
+    /// Current block for immediate node/style cleanup.
     block: u32,
     /// Spans (start offsets) of function literals that form a `return`
     /// value, e.g. an unsubscribe/effect cleanup function.
@@ -179,6 +226,8 @@ pub(crate) struct Analyzer<'s, 'c> {
     this_aliases: HashSet<SymbolId>,
     /// Parameter bindings and names of local functions, by function binding.
     fn_params: HashMap<SymbolId, Vec<Option<(SymbolId, String)>>>,
+    /// Declaration spans of module bindings initialized with function literals.
+    module_functions: HashSet<Span>,
     /// Recorded calls to local functions: binding and argument identities.
     fn_calls: Vec<(SymbolId, Vec<Option<ArgKey>>)>,
     /// Owner binding of each enclosing function, innermost last.
@@ -186,6 +235,8 @@ pub(crate) struct Analyzer<'s, 'c> {
     /// Owner binding for a function literal currently being visited as a
     /// variable initializer or assignment value.
     pending_owner: Vec<Option<SymbolId>>,
+    /// Enclosing write expression for module-state target locations.
+    write_context: Option<(Span, &'static str)>,
     conditional_depth: usize,
     dependencies: Vec<Dependency>,
     gaps: Vec<Gap>,
@@ -213,17 +264,22 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             uncertain: false,
             strict,
             findings: vec![],
+            polyfill_guards: vec![],
             deferred: vec![],
+            node_removals: HashMap::new(),
             listener_removals: vec![],
+            function_scope: 0,
             block: 0,
             returned_fns: HashSet::new(),
             cleanup_blocks: vec![],
             aliases: HashMap::new(),
             this_aliases: HashSet::new(),
             fn_params: HashMap::new(),
+            module_functions: HashSet::new(),
             fn_calls: vec![],
             fn_stack: vec![],
             pending_owner: vec![],
+            write_context: None,
             conditional_depth: 0,
             dependencies: vec![],
             gaps: vec![],
@@ -290,6 +346,8 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                 operation: operation.into(),
                 confidence,
                 detail,
+                polyfill: None,
+                declaration: None,
             });
         }
     }
@@ -318,24 +376,35 @@ impl<'s, 'c> Analyzer<'s, 'c> {
                     operation: operation.into(),
                     confidence,
                     detail,
+                    polyfill: None,
+                    declaration: None,
                 },
                 node,
                 listener,
                 block: self.block,
+                function_scope: self.function_scope,
                 unconditional: self.conditional_depth == 0,
                 owner: self.fn_stack.last().copied().flatten(),
             });
         }
     }
 
-    fn cleanup(&mut self, node: u32) {
-        // DOM node cleanup still requires the same execution path.
-        // Listener pairing is handled independently at end of file.
+    fn cleanup(&mut self, node: u32, span: Span, parents: Option<Vec<String>>) {
+        self.node_removals.entry(node).or_default().push((
+            self.function_scope,
+            span.start,
+            parents.clone(),
+        ));
+        // Preserve immediate/returned cleanup for stylesheet injections. DOM
+        // insertions can also pair with callback removals at end of file.
         if self.conditional_depth != 0 {
             return;
         }
         self.deferred.retain(|d| {
-            let same = d.node == Some(node);
+            let same = d.node == Some(node)
+                && parents
+                    .as_ref()
+                    .is_none_or(|parents| parents.contains(&d.finding.target));
             // A removal inside a function returned from the registering
             // block pairs with registrations on that same execution path,
             // even when both sit under a branch (for example an effect
@@ -395,7 +464,15 @@ impl<'s, 'c> Analyzer<'s, 'c> {
     /// identities, and one paired call is enough to cancel the helper's
     /// single finding.
     fn finish(mut self) -> Analysis {
+        // Classify after the walk so declaration order does not affect exclusion.
+        self.findings.retain(|finding| {
+            !finding
+                .declaration
+                .as_ref()
+                .is_some_and(|declaration| self.module_functions.contains(&declaration.span))
+        });
         let removals = std::mem::take(&mut self.listener_removals);
+        let node_removals = std::mem::take(&mut self.node_removals);
         let fn_params = std::mem::take(&mut self.fn_params);
         let fn_calls = std::mem::take(&mut self.fn_calls);
         let keys_at_calls = |key: &ListenerKey, owner: Option<SymbolId>| {
@@ -415,6 +492,20 @@ impl<'s, 'c> Analyzer<'s, 'c> {
             .flat_map(|r| keys_at_calls(&r.key, r.owner))
             .collect();
         self.deferred.retain(|d| {
+            if d.finding.rule == Rule::DomInsertion
+                && d.node
+                    .and_then(|node| node_removals.get(&node))
+                    .is_some_and(|sites| {
+                        sites.iter().any(|(scope, start, parents)| {
+                            (*scope != d.function_scope || *start > d.finding.span.start)
+                                && parents
+                                    .as_ref()
+                                    .is_none_or(|parents| parents.contains(&d.finding.target))
+                        })
+                    })
+            {
+                return false;
+            }
             let Some(key) = &d.listener else { return true };
             !keys_at_calls(key, d.owner)
                 .iter()

@@ -12,10 +12,13 @@ import { badge, bytes, count, empty, externalLink, html, human, type Markup } fr
 import {
   codeWindow,
   viewerTarget,
+  writeRows,
   type SourceText,
   type Viewer,
   type ViewerTarget,
 } from './source-view.js';
+import { type OriginalSources, type OriginalView } from './original-sources.js';
+import { englishMessages } from '@bloodhound-rs/playground';
 
 export function sourceButton(index: ManifestIndex, id: string, compact = false): Markup {
   const source = index.sources.get(id);
@@ -155,7 +158,7 @@ function findingNav(index: ManifestIndex, row: RecordRow): Markup {
       return x.line - y.line || x.column - y.column || a.index - b.index;
     });
   if (rows.length < 2) return html``;
-  const at = rows.findIndex((candidate) => candidate.id === row.id);
+  const at = rows.findIndex((candidate) => candidate.index === row.index);
   const prev = rows[at - 1];
   const next = rows[at + 1];
   return html`<span class="code-nav"
@@ -184,10 +187,12 @@ function codeViewer(
   target: ViewerTarget,
   viewer: Viewer,
   state: SourceText | undefined,
+  actionPrefix = 'source',
 ): Markup {
   const location = target.location;
   const heading = html`<div class="code-head">
-    <span class="code-file" title="${target.url}">${sourceName(target.source)}</span
+    <span class="code-file" title="${target.label ?? target.url}"
+      >${target.label ?? sourceName(target.source)}</span
     ><span class="code-loc"
       >${location ? `L${location.line}:${location.column}` : 'File start'}</span
     >${findingNav(index, row)}
@@ -201,15 +206,19 @@ function codeViewer(
     return html`<div class="code-panel">
       ${heading}
       <p class="code-state">
-        Source could not be loaded in the browser${state.error ? `: ${state.error}` : ''}. The
-        server may block cross-origin reads (CORS); the snippet above is the recorded excerpt.
-        <button class="text-link" data-action="source-retry">Retry</button>
+        Source could not be loaded${state.error ? `: ${state.error}` : ''}.
+        <button class="text-link" data-action="${actionPrefix}-retry">Retry</button>
       </p>
     </div>`;
   const view = codeWindow(state.text ?? '', location, viewer.radius);
   const truncated = view.from > 1 || view.to < view.total;
   return html`<div class="code-panel">
     ${heading}
+    ${location && location.line > view.total
+      ? html`<p class="code-state">
+          The recorded position is beyond this file's current contents.
+        </p>`
+      : ''}
     <div class="code-view ${viewer.wrap ? 'wrap' : ''}" tabindex="0" aria-label="Source code">
       <div class="code-lines">
         ${view.lines.map(
@@ -227,8 +236,14 @@ function codeViewer(
     </div>
     <div class="code-foot">
       <span>Lines ${count(view.from)}–${count(view.to)} of ${count(view.total)}</span>${truncated
-        ? html`<button class="text-link" data-action="source-expand">Expand context</button>`
-        : ''}<button class="text-link" data-action="source-wrap" aria-pressed="${viewer.wrap}">
+        ? html`<button class="text-link" data-action="${actionPrefix}-expand">
+            Expand context
+          </button>`
+        : ''}<button
+        class="text-link"
+        data-action="${actionPrefix}-wrap"
+        aria-pressed="${viewer.wrap}"
+      >
         ${viewer.wrap ? 'No wrap' : 'Wrap lines'}
       </button>
     </div>
@@ -241,8 +256,10 @@ function fileCard(
   row: RecordRow,
   viewer: Viewer | undefined,
   texts: Map<string, SourceText>,
+  originals: OriginalSources,
+  originalView: OriginalView,
 ): Markup {
-  const target = viewerTarget(index, row);
+  const target = viewerTarget(index, row, originals.workspace);
   const open = Boolean(target && viewer && viewer.sourceId === target.source.id);
   return html`<section class="detail-section">
     <h3>Source file</h3>
@@ -274,10 +291,108 @@ function fileCard(
       ${open && target && viewer
         ? codeViewer(index, row, target, viewer, texts.get(target.url))
         : ''}
+      ${source.file
+        ? html`<p class="aside-hint">Project file: <code>${source.file}</code></p>`
+        : ''}
+      <details class="source-map-link">
+        <summary>Link source map</summary>
+        <form id="source-map-form">
+          <label for="source-map-input">Source map URL or project path</label>
+          <div class="source-map-input-row">
+            <input
+              id="source-map-input"
+              type="text"
+              placeholder="https://…/bundle.js.map or dist/bundle.js.map"
+              value="${originals.reference(source)?.file ?? originals.reference(source)?.url ?? ''}"
+              required
+            />
+            <button class="button secondary" type="submit">Link</button>
+          </div>
+        </form>
+        ${originals.reference(source)
+          ? html`<button class="text-link" data-action="map-unlink">Remove link</button>`
+          : ''}
+      </details>
     </div>
+    ${originalSourceCard(index, source, row, originals, originalView)}
     <h4>Shortest entry chain</h4>
     ${chain(index, source)}
   </section>`;
+}
+
+function originalSourceCard(
+  index: ManifestIndex,
+  source: ManifestSource,
+  row: RecordRow,
+  originals: OriginalSources,
+  view: OriginalView,
+): Markup {
+  const reference = originals.reference(source);
+  if (!reference) return html``;
+  const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
+  const atDeclaration = Boolean(view.declaration && declaration);
+  const state = originals.previews.get(`${row.id}${atDeclaration ? ':declaration' : ''}`);
+  const writeLocation = 'location' in row.data ? row.data.location : undefined;
+  const location = atDeclaration ? declaration!.location : writeLocation;
+  const path = state?.path ?? location?.original?.source;
+  const origin =
+    state?.origin === 'project'
+      ? 'Current project file · positions refer to the scanned build'
+      : state?.origin === 'sourcemap'
+        ? 'Source map · build snapshot'
+        : state?.origin === 'remote'
+          ? 'Remote source file'
+          : '';
+  return html`<div class="original-source">
+    <h4>Original source</h4>
+    ${declaration && writeLocation
+      ? html`<div class="action-row">
+          <button class="text-link" data-action="write-open" aria-pressed="${!atDeclaration}">
+            ${englishMessages['source.writePosition']
+              .replace('{line}', String((writeLocation.original ?? writeLocation).line))
+              .replace('{column}', String((writeLocation.original ?? writeLocation).column))}
+          </button>
+          <button class="text-link" data-action="declaration-open" aria-pressed="${atDeclaration}">
+            ${englishMessages['source.declarationPosition']
+              .replace('{name}', declaration.name)
+              .replace(
+                '{line}',
+                String((declaration.location.original ?? declaration.location).line),
+              )
+              .replace(
+                '{column}',
+                String((declaration.location.original ?? declaration.location).column),
+              )}
+          </button>
+        </div>`
+      : ''}
+    ${path ? html`<p class="url">${path}</p>` : ''}
+    <p class="aside-hint">Source map: ${reference.file ?? reference.url}</p>
+    ${location
+      ? html`<button
+          class="text-link"
+          data-action="${view.open ? 'original-close' : 'original-open'}"
+          aria-expanded="${view.open}"
+        >
+          ${view.open ? 'Hide original source' : 'Preview original source'}
+        </button>`
+      : html`<p class="aside-hint">Select a finding to preview its original source location.</p>`}
+    ${view.open && location
+      ? html`${origin ? html`<p class="aside-hint">${origin}</p>` : ''}${codeViewer(
+          index,
+          row,
+          {
+            source,
+            url: state?.url ?? '',
+            label: path ?? 'Original source',
+            location: state?.location,
+          },
+          { sourceId: source.id, url: state?.url ?? '', radius: view.radius, wrap: view.wrap },
+          state,
+          'original',
+        )}`
+      : ''}
+  </div>`;
 }
 
 function graphNode(index: ManifestIndex, id: string, current = false): Markup {
@@ -355,14 +470,18 @@ export function inspector(
   expanded: boolean,
   viewer: Viewer | undefined,
   texts: Map<string, SourceText>,
+  originals: OriginalSources,
+  originalView: OriginalView,
 ): Markup {
   if (!row)
     return empty(
       'Inspect a record',
       'Select a record to see its source, location and dependency relationships.',
     );
+  const writes = writeRows(row);
+  const activeRow = writes[originalView.write ?? 0] ?? row;
   const source = row.source ? index.sources.get(row.source) : undefined;
-  const location = 'location' in row.data ? row.data.location : undefined;
+  const location = 'location' in activeRow.data ? activeRow.data.location : undefined;
   const parent = source && location ? index.parentLocation(source.id, location) : undefined;
   const entryOwners = row.source
     ? [...index.entryReach].filter(([, reach]) => reach.has(row.source!)).map(([id]) => id)
@@ -395,11 +514,43 @@ export function inspector(
           Copy JSON
         </button>
       </div>
-      ${row.view === 'findings' ? findingDetails(row.data as ManifestFinding) : ''}
+      ${writes.length > 1
+        ? html`<section class="detail-section">
+            <h3>
+              ${englishMessages[
+                row.type === 'module-state-write' ? 'record.writes' : 'record.occurrences'
+              ].replace('{count}', String(writes.length))}
+            </h3>
+            <div class="action-row">
+              ${writes.map((write, index) => {
+                const position = 'location' in write.data ? write.data.location : undefined;
+                const at = position?.original ?? position;
+                return at
+                  ? html`<button
+                      class="text-link"
+                      data-action="write-select"
+                      data-write="${index}"
+                      aria-pressed="${index === (originalView.write ?? 0)}"
+                    >
+                      ${englishMessages[
+                        row.type === 'module-state-write'
+                          ? 'source.writeOccurrence'
+                          : 'source.occurrence'
+                      ]
+                        .replace('{index}', String(index + 1))
+                        .replace('{line}', String(at.line))
+                        .replace('{column}', String(at.column))}
+                    </button>`
+                  : '';
+              })}
+            </div>
+          </section>`
+        : ''}
+      ${row.view === 'findings' ? findingDetails(activeRow.data as ManifestFinding) : ''}
       ${row.view === 'dependencies' ? dependencyDetails(index, row.data as ManifestDependency) : ''}
       ${row.view === 'gaps' ? gapDetails(row.data as ManifestGap) : ''}
       ${source
-        ? fileCard(index, source, row, viewer, texts)
+        ? fileCard(index, source, activeRow, viewer, texts, originals, originalView)
         : html`<section class="detail-section">
             <h3>Scope</h3>
             <p>This gap applies to the scan as a whole.</p>
@@ -490,6 +641,25 @@ function findingDetails(finding: ManifestFinding): Markup {
   return html`<section class="detail-section">
     <h3>Recorded operation <span class="pill">${finding.operation}</span></h3>
     <pre class="snippet"><code>${finding.snippet || 'No code excerpt provided.'}</code></pre>
+    ${finding.declaration
+      ? html`<p class="detail-line">
+          <span class="detail-label">${englishMessages['source.declaration']}</span>
+          <code
+            >${finding.declaration.name} ·
+            L${(finding.declaration.location.original ?? finding.declaration.location).line}:${(
+              finding.declaration.location.original ?? finding.declaration.location
+            ).column}</code
+          >
+        </p>`
+      : ''}
+    ${finding.polyfill
+      ? html`<p class="aside-hint">
+          ${englishMessages['polyfill.detail'].replace(
+            '{target}',
+            finding.polyfill.guardTarget ?? finding.target,
+          )}
+        </p>`
+      : ''}
     ${finding.detail
       ? html`<p class="detail-line">
           <span class="detail-label">${detailLabel}</span><code>${finding.detail}</code>

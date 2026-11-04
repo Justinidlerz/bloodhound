@@ -79,18 +79,42 @@ Ordinary function bodies are visited for potential effects, while their binding 
 
 Style/DOM insertions and listeners start as deferred findings. Cleanup matching then decides whether they enter the final findings array. URLs on created script/link nodes become dependencies when insertion is observed; stylesheet links require `rel=stylesheet`.
 
+### Static finding refinements
+
+After graph collection, a bounded Rust pass summarizes local factories and resolves their named imports through existing dependency edges. It binds inline callback parameters from the factory's actual fresh object arguments, then checks stable values and branch reachability in each resource. It does not load additional sources or infer CommonJS semantics from names.
+
+The same pass removes null-listener and dotted Storage-data-key findings and marks matching `Symbol.toStringTag` fallbacks. It edits individual operations before manifest grouping. Argument effects, unresolved operations, dependencies and coverage gaps remain. Parse/budget failure and direct `eval` disable the pass for that resource.
+
+### Component state across visits
+
+After source-map refinement, the Rust component-state pass selects module-state candidates with positive evidence. It resolves React hook imports and Oxc binding identities, then follows bounded local calls, argument bindings and return values. Generated candidates use their embedded original source independently; unresolved generated hook identities do not fall back to broad shared-write reporting.
+
+| Evidence                                                                                                                                                                                                                 | Result                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Module value reaches a React initializer and a local component/callback/helper writes it                                                                                                                                 | Keep the declaration and explain inherited component state.                                |
+| A module-dependent empty return bypasses a resolved React setter/dispatch                                                                                                                                                | Keep the declaration and explain the skipped state update.                                 |
+| A module-dependent empty return bypasses `this.method(payload)`, matches a unique local `{ ...state, ...payload }` reducer in the same factory descriptor with an initial object, and the guard binding is written later | Keep a medium-confidence candidate; receiver dispatch and store lifetime are not resolved. |
+| Dominating refresh, matching effect cleanup or a complete temporary-guard finalizer                                                                                                                                      | Exclude the matching pattern.                                                              |
+| Ordinary shared state or unresolved value flow                                                                                                                                                                           | Exclude from this rule without classifying it as safe.                                     |
+
+The pass is bounded by the resource step budget, local call depth and context count. Parse/analysis-budget failures record a coverage gap. It does not fetch additional code or infer semantics from business variable names, file names, logging names or instance method names. Grouping and plugin severity handling remain unchanged.
+
+Receiver matching preserves `this` through arrow callbacks and stops at ordinary function boundaries. It rejects ambiguous reducer names and dynamic/spread descriptor keys. The merge reducer must return an object spreading its first two identifier parameters in order. This structural match does not establish whether the factory creates a new store or a singleton; it reports that lifecycle boundary for verification.
+
 ### Cleanup pairing
 
-| Deferred effect | Pairing identity            | Suppression rule                                                                                                            |
-| --------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Listener        | Event and handler reference | A matching removal anywhere in the file suppresses the finding, regardless of receiver, capture, source order or conditions |
-| DOM/style node  | Tracked allocation          | A later removal in the same straight-line block or a returned cleanup function suppresses the finding                       |
+| Effect                  | Pairing identity                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| Attribute/class/style   | Receiver identity and attribute, class token or style property                                |
+| DOM/style node          | Allocation/binding or owned instance field; matching parent or the node's own parent          |
+| Listener                | Event and callback identity, including local helper arguments and keyed callback storage      |
+| Global/host restoration | Mutated property and captured original value; descendant writes belong to the replaced object |
 
-Listener keys use Oxc bindings, unresolved global names and canonical member paths. Aliases retain the original reference. Parameters in different functions retain different binding identities; their names alone never establish a match. Calls to local registration and removal helpers substitute argument identities into both keys, including calls before the helper declaration. Static member paths such as `this.handler` remain an approximation: they do not distinguish runtime instances. Reassignments and arbitrary function-return values are not fully modeled.
+The Rust cleanup pass runs after effect detection and before resource-level findings are grouped. It uses Oxc lexical bindings, class/prototype ownership, bounded alias expansion and local helper summaries. Babel-style method descriptors are recognized only through local property-definition helpers. Multi-item effects require every item to pair. Complete literal event arrays are expanded to event identities. Repeated names in different scopes do not establish identity.
 
-A removal for a different handler or event does not suppress a registration. Unresolvable callbacks such as a direct `handler.bind(this)` call have no pairing key. Inline anonymous registrations stay outside the listener rule. `once: true` and `signal` options count as removal mechanisms. None of these rules proves that teardown executes.
+Generated effects are grouped by mapped original source. Embedded original sources provide additional pairing evidence, mapped back to the generated operation. The pass does not fetch additional code. Parse failures, exhausted budgets and unresolved identities keep candidates.
 
-DOM cleanup retains its execution-path checks. Ordinary conditional branches and loops prevent same-block suppression; null guards match the optional-chaining behavior. Returned function literals can pair with an insertion in their enclosing block. Every listener removal is recorded separately for end-of-file pairing.
+Conditional branches and callback order do not prevent a recognized release pair. In one synchronous scope, node removal must follow insertion, and an original-value capture must precede the replacement. These are static exclusions, not a proof that a release path executes. Existing listener handling also recognizes `once`, abort signals and paired event/handler references; arbitrary function-return values remain unresolved.
 
 ## Reporting and performance
 

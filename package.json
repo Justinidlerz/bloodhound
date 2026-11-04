@@ -1,11 +1,11 @@
 {
   "name": "@bloodhound-rs/core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Rust static scanner that finds global-environment pollution in JavaScript and HTML",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "packageManager": "pnpm@10.20.0",
   "main": "./dist/index.js",
@@ -13,7 +13,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     }
   },
   "files": [
@@ -24,10 +25,11 @@
   ],
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
-    "build:ts": "tsc -p tsconfig.json",
+    "build:ts": "pnpm build:manifest && tsc -p tsconfig.json",
     "build:plugin": "pnpm --filter @bloodhound-rs/rollup-plugin build",
-    "build": "node scripts/clean-dist.mjs && pnpm build:native && pnpm build:ts && pnpm build:plugin",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2023 tests/types.test.ts && pnpm --filter @bloodhound-rs/rollup-plugin typecheck && pnpm typecheck:playground",
+    "build:js": "pnpm build:ts && pnpm build:plugin && pnpm build:playground-package",
+    "build": "node scripts/clean-dist.mjs && pnpm build:native && pnpm build:js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2023 tests/types.test.ts && pnpm --filter @bloodhound-rs/rollup-plugin typecheck && pnpm typecheck:playground && pnpm --filter @bloodhound-rs/manifest typecheck && pnpm --filter @bloodhound-rs/playground typecheck",
     "prepack": "pnpm build",
     "example": "node examples/scan.mjs",
     "example:html": "node examples/scan-html.mjs",
@@ -47,17 +49,25 @@
     "test:rust": "cargo test --locked --lib",
     "test:scripts": "node --test tests/scripts.test.mjs tests/release.test.mjs",
     "test:sdk": "node --test tests/sdk.test.mjs",
-    "test:plugin": "pnpm --filter @bloodhound-rs/rollup-plugin test"
+    "test:plugin": "pnpm --filter @bloodhound-rs/rollup-plugin test",
+    "build:manifest": "pnpm --filter @bloodhound-rs/manifest build",
+    "build:playground-package": "pnpm --filter @bloodhound-rs/playground... build"
   },
   "devDependencies": {
     "@bloodhound-rs/rollup-plugin": "workspace:*",
     "@changesets/cli": "3.0.3",
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@napi-rs/cli": "3.10.8",
     "@types/node": "^22.19.0",
     "prettier": "3.6.2",
     "rolldown": "1.2.14",
     "rollup": "^4.64.12",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@bloodhound-rs/playground": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0"
   },
   "napi": {
     "binaryName": "bloodhound",
@@ -84,5 +94,8 @@
     "@bloodhound-rs/core-linux-arm64-gnu": "workspace:*",
     "@bloodhound-rs/core-linux-x64-gnu": "workspace:*",
     "@bloodhound-rs/core-win32-x64-msvc": "workspace:*"
+  },
+  "dependencies": {
+    "@bloodhound-rs/manifest": "workspace:*"
   }
 }

@@ -132,23 +132,23 @@ fn cleanup_requires_identity_order_and_paired_removal() {
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); function dispose(){s.remove()}",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); if(ok)s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); ok && s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); while(ok)s.remove();",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); document.head.appendChild(s); switch(x){case 1:s.remove();}",
-            1,
+            0,
         ),
         (
             "const s=document.createElement('style'); const alias=s; document.head.appendChild(s); alias.remove();",

@@ -1,0 +1,31 @@
+body {
+  margin: 0;
+  color: #1d2939;
+  background: #fff;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+.react-playground {
+  max-width: 1440px;
+  margin: auto;
+  padding: 24px;
+}
+.react-playground button,
+.react-playground input,
+.react-playground select {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid #dce1e8;
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+}
+.react-playground button {
+  cursor: pointer;
+}
+.react-playground button:disabled {
+  color: #667085;
+  cursor: default;
+  background: #f2f4f7;
+}

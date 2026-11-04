@@ -1,18 +1,19 @@
 {
   "name": "@bloodhound-rs/rollup-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rollup, Rolldown, and Vite plugin that scans emitted bundles with @bloodhound-rs/core during generateBundle",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     }
   },
   "files": [
@@ -25,7 +26,8 @@
     "test": "node --test tests/plugin.test.mjs"
   },
   "dependencies": {
-    "@bloodhound-rs/core": "workspace:*"
+    "@bloodhound-rs/core": "workspace:*",
+    "@jridgewell/trace-mapping": "^0.3.31"
   },
   "peerDependencies": {
     "rolldown": ">=1.0.0",

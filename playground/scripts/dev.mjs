@@ -1,9 +1,10 @@
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, realpath } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { basename, extname, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { build, output, root } from './build.mjs';
+import { readProjectFile } from './project-files.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -12,9 +13,12 @@ const { values } = parseArgs({
     // or a remote http(s) manifest URL the page fetches itself.
     manifest: { type: 'string' },
     'manifest-url': { type: 'string' },
+    project: { type: 'string', default: process.cwd() },
   },
 });
 const port = Number(values.port);
+const projectRoot = await realpath(resolve(values.project));
+if (!(await stat(projectRoot)).isDirectory()) throw new Error('--project must be a directory');
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
   throw new Error('--port must be an integer from 0 to 65535');
 }
@@ -55,7 +59,31 @@ const server = createServer(async (request, response) => {
     return;
   }
   try {
-    const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+    const requestUrl = new URL(request.url, 'http://localhost');
+    const pathname = decodeURIComponent(requestUrl.pathname);
+    if (pathname === '/__workspace' || pathname === '/__project') {
+      const origin = `http://${request.headers.host}`;
+      const hostname = new URL(origin).hostname;
+      if (
+        !['127.0.0.1', 'localhost'].includes(hostname) ||
+        (request.headers.origin && request.headers.origin !== origin)
+      ) {
+        response.writeHead(403).end('Forbidden');
+        return;
+      }
+      const content =
+        pathname === '/__workspace'
+          ? JSON.stringify({ projectRoot, fileEndpoint: '/__project' })
+          : await readProjectFile(projectRoot, requestUrl.searchParams.get('path') ?? '');
+      response.writeHead(200, {
+        'Content-Type':
+          pathname === '/__workspace'
+            ? 'application/json; charset=utf-8'
+            : 'text/plain; charset=utf-8',
+      });
+      response.end(request.method === 'HEAD' ? undefined : content);
+      return;
+    }
     if (manifestPath && pathname === '/__manifest') {
       // Read fresh on every request so a regenerated manifest is picked up
       // by a page refresh.
@@ -108,6 +136,10 @@ async function rebuild() {
 }
 const watchers = [
   watch(`${root}src`, { recursive: true }, schedule),
+  watch(`${root}../packages/manifest/src`, { recursive: true }, schedule),
+  watch(`${root}../packages/playground/src`, { recursive: true }, schedule),
+  watch(`${root}react.html`, schedule),
+  watch(`${root}react.css`, schedule),
   watch(`${root}index.html`, schedule),
   watch(`${root}styles.css`, schedule),
   watch(`${root}icon.svg`, schedule),
@@ -131,6 +163,10 @@ server.listen(port, '127.0.0.1', () => {
       ? `${baseUrl}/?manifest=${encodeURIComponent(manifestUrl)}`
       : undefined;
   console.log(`Bloodhound Playground: ${preload ?? baseUrl}`);
+  const reactUrl = new URL(preload ?? baseUrl);
+  reactUrl.pathname = '/react.html';
+  console.log(`React components: ${reactUrl.href}`);
+  console.log(`Source preview directory: ${projectRoot}`);
   console.log(
     preload
       ? 'The manifest loads automatically. Press Ctrl+C to stop.'

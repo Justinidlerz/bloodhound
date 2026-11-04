@@ -10,7 +10,7 @@ use crate::lines::LineIndex;
 use crate::model::*;
 use crate::resolve;
 use crate::scheduler::Graph;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Maximum characters in a finding snippet.
 const SNIPPET_MAX: usize = 160;
@@ -22,7 +22,7 @@ pub fn build(graph: Graph, dependency_mode: DependencyMode) -> Manifest {
         .collect();
     let chains = chains(&graph);
     let mut sources = Vec::with_capacity(graph.resources.len());
-    let mut findings = Vec::new();
+    let mut findings: Vec<ManifestFinding> = Vec::new();
     let mut dependencies = Vec::new();
     let mut gap_groups: BTreeMap<(Option<usize>, &str, Option<String>), (usize, Option<Location>)> =
         BTreeMap::new();
@@ -48,6 +48,8 @@ pub fn build(graph: Graph, dependency_mode: DependencyMode) -> Manifest {
                             line: token.get_src_line() + 1,
                             column: token.get_src_col(),
                             name: token.get_name().map(String::from),
+                            end_line: None,
+                            end_column: None,
                         });
                     }
                 }
@@ -104,8 +106,10 @@ pub fn build(graph: Graph, dependency_mode: DependencyMode) -> Manifest {
         };
 
         // ---- findings
+        let mut module_bindings = HashMap::<_, usize>::new();
+        let mut source_lines = HashMap::<_, usize>::new();
         for f in &analysis.findings {
-            findings.push(ManifestFinding {
+            let finding = ManifestFinding {
                 source: id.clone(),
                 rule: f.rule,
                 severity: f.rule.severity(),
@@ -117,7 +121,56 @@ pub fn build(graph: Graph, dependency_mode: DependencyMode) -> Manifest {
                     .map(|ix| ix.snippet(f.span, SNIPPET_MAX))
                     .unwrap_or_default(),
                 detail: f.detail.clone(),
-            });
+                polyfill: f.polyfill.clone(),
+                declaration: f.declaration.as_ref().map(|declaration| {
+                    let mut location = index
+                        .map(|ix| ix.location(declaration.span))
+                        .unwrap_or_default();
+                    location.original = declaration.original.clone();
+                    ManifestDeclaration {
+                        name: declaration.name.clone(),
+                        location,
+                    }
+                }),
+                writes: vec![],
+            };
+            let position = if let Some(declaration) = f
+                .declaration
+                .as_ref()
+                .filter(|_| f.rule == Rule::ModuleStateWrite)
+            {
+                let key = (
+                    declaration.span,
+                    declaration
+                        .original
+                        .as_ref()
+                        .map(|location| (location.source.clone(), location.line, location.column)),
+                );
+                *module_bindings.entry(key).or_insert(findings.len())
+            } else {
+                let (source, line) = finding
+                    .location
+                    .original
+                    .as_ref()
+                    .map_or((None, finding.location.line), |location| {
+                        (Some(location.source.clone()), location.line)
+                    });
+                // Keep hidden polyfills separate from ordinary findings.
+                let key = (f.rule, source, line, f.polyfill.is_some());
+                *source_lines.entry(key).or_insert(findings.len())
+            };
+            if position < findings.len() {
+                let group = &mut findings[position];
+                if group.writes.is_empty() {
+                    group.writes.push(group.as_write());
+                }
+                group.writes.push(finding.as_write());
+                if finding.confidence == Confidence::Medium {
+                    group.confidence = Confidence::Medium;
+                }
+            } else {
+                findings.push(finding);
+            }
         }
 
         // ---- dependency edges

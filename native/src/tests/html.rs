@@ -9,14 +9,14 @@ fn css_is_discovered_but_only_document_inline_styles_are_findings() {
         vec![content(Kind::Html, "https://example.test/", html)],
         options(),
     );
-    assert_eq!(m.findings.len(), 3);
-    assert_eq!(
-        m.findings
-            .iter()
-            .filter(|f| f.rule == Rule::HtmlGlobalStyle)
-            .count(),
-        2
-    );
+    assert_eq!(m.findings.len(), 2);
+    let styles: Vec<_> = m
+        .findings
+        .iter()
+        .filter(|f| f.rule == Rule::HtmlGlobalStyle)
+        .collect();
+    assert_eq!(styles.len(), 1);
+    assert_eq!(styles[0].writes.len(), 2);
     assert_eq!(
         m.dependencies
             .iter()

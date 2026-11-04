@@ -1,3 +1,6 @@
+import type { ResourceKind, ScriptMode, DependencyMode } from '@bloodhound-rs/manifest/types';
+export type * from '@bloodhound-rs/manifest/types';
+
 /**
  * Public types of `@bloodhound-rs/core`.
  *
@@ -19,16 +22,6 @@ export type Source =
       /** Logical URL used to resolve relative dependencies and to label the resource. */
       resourceUrl?: string;
     };
-
-export type ResourceKind = 'js' | 'html' | 'css';
-
-/**
- * How a JavaScript resource executes. Top-level `var`/`function` in a classic
- * script become `window` properties; in a module they stay module-local.
- */
-export type ScriptMode = 'classic' | 'module';
-
-export type DependencyMode = 'single' | 'recursive';
 
 export interface ScanEntry {
   kind: ResourceKind;
@@ -106,153 +99,8 @@ export interface ScanOptions {
   /** Extra request headers keyed by `host[:port]`. */
   requestHeaders?: Record<string, Record<string, string>>;
   proxy?: string;
-  /** Decode `sourceMappingURL` comments and attach original locations. */
+  /** Decode source maps, attach original locations and verify module-state writes against embedded original sources. */
   sourceMaps?: boolean;
   /** Cancels a running scan. The result is a manifest with `status: 'cancelled'`. */
   signal?: AbortSignal;
-}
-
-// ---------------------------------------------------------------------------
-// Manifest
-// ---------------------------------------------------------------------------
-
-/**
- * Pollution categories reported by the scanner.
- *
- * | rule                   | meaning                                                             |
- * |------------------------|---------------------------------------------------------------------|
- * | `global-write`         | `window.x = …`, top-level `var`/`function` in classic scripts       |
- * | `document-write`       | `document.body.className = …`, `document.body.setAttribute(…)`      |
- * | `builtin-mutation`     | `Array.prototype.x = …`, `Promise.allSettled = …`                   |
- * | `host-api-override`    | `window.fetch = …`, `XMLHttpRequest.prototype.open = …`             |
- * | `dom-insertion`        | `document.body.appendChild(…)`, `document.write(…)`                 |
- * | `style-injection`      | `<style>`/`<link>` inserted by script without removal               |
- * | `document-style-write` | `document.body.style.x = …`, `documentElement.style.setProperty(…)` |
- * | `global-listener`      | `window.addEventListener(…)` without `removeEventListener`          |
- * | `html-global-style`    | `style=` attribute on `<html>`/`<body>`                             |
- */
-export type Rule =
-  | 'global-write'
-  | 'document-write'
-  | 'builtin-mutation'
-  | 'host-api-override'
-  | 'dom-insertion'
-  | 'style-injection'
-  | 'document-style-write'
-  | 'global-listener'
-  | 'html-global-style';
-
-export type Severity = 'info' | 'warning' | 'error';
-
-/**
- * `high`: the receiver is provably the global object, `document`, or a builtin.
- * `medium`: the receiver was tracked through a reassignable alias or a branch.
- */
-export type Confidence = 'high' | 'medium';
-
-export type ScanStatus = 'completed' | 'partial' | 'failed' | 'cancelled';
-export type SourceStatus = 'completed' | 'partial' | 'failed';
-export type DependencyStatus = 'resolved' | 'not-followed' | 'unresolved';
-
-export type DependencyKind =
-  | 'script'
-  | 'inline-script'
-  | 'style'
-  | 'module-preload'
-  | 'iframe'
-  | 'import'
-  | 'dynamic-import'
-  | 'worker'
-  | 'dynamic-script'
-  | 'dynamic-style';
-
-/** Lines are 1-based; columns are 0-based UTF-16 code units. */
-export interface Location {
-  line: number;
-  column: number;
-  endLine: number;
-  endColumn: number;
-  /** Original position from a source map when `sourceMaps` was enabled. */
-  original?: { source: string; line: number; column: number; name?: string };
-}
-
-export interface ManifestSource {
-  /** Manifest-local id such as `s1`. */
-  id: string;
-  kind: ResourceKind;
-  /** Logical URL. Absent for anonymous inline content. */
-  url?: string;
-  /** Present for inline scripts extracted from an HTML parent. */
-  inline?: { parent: string; line: number; column: number };
-  scriptMode?: ScriptMode;
-  status: SourceStatus;
-  bytes: number;
-  contentHash: string;
-  /** Ids of the sources that referenced this one. Empty for entries. */
-  referrers: string[];
-  /** Shortest chain of source ids from an entry to this source, inclusive. */
-  chain: string[];
-}
-
-export interface ManifestFinding {
-  /** Source id containing the pollution. */
-  source: string;
-  rule: Rule;
-  severity: Severity;
-  /** Dotted path of the polluted target, e.g. `window.sharedConfig`. */
-  target: string;
-  /** `write` | `update` | `define` | `delete` | `declare` | `insert` | `listen` | `style`. */
-  operation: string;
-  confidence: Confidence;
-  location: Location;
-  /** Trimmed excerpt of the offending expression. */
-  snippet: string;
-  detail?: string;
-}
-
-export interface ManifestDependency {
-  from: string;
-  /** Set when the dependency was resolved and analyzed. */
-  to?: string;
-  kind: DependencyKind;
-  specifier?: string;
-  url?: string;
-  status: DependencyStatus;
-  reason?: string;
-  location: Location;
-}
-
-export interface ManifestGap {
-  source?: string;
-  reason: string;
-  count: number;
-  detail?: string;
-  location?: Location;
-}
-
-export interface Summary {
-  sources: number;
-  findings: number;
-  errors: number;
-  warnings: number;
-  dependencies: number;
-  unresolved: number;
-  gaps: number;
-  bytes: number;
-  elapsedMs: number;
-}
-
-/** The scan result. */
-export interface Manifest {
-  schemaVersion: 2;
-  scannerVersion: string;
-  status: ScanStatus;
-  dependencyMode: DependencyMode;
-  summary: Summary;
-  /** Source ids of the entries, in request order. */
-  entries: string[];
-  sources: ManifestSource[];
-  findings: ManifestFinding[];
-  dependencies: ManifestDependency[];
-  gaps: ManifestGap[];
 }

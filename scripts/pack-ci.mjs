@@ -98,7 +98,8 @@ if (
   throw new Error('Core must depend on the exact versions of all platform packages');
 }
 const alreadyPacked = new Set(packages.map(({ name }) => name));
-for (const { directory, manifest } of dependencyOrder(workspacePackages())) {
+const workspace = workspacePackages();
+for (const { directory, manifest } of dependencyOrder(workspace)) {
   if (alreadyPacked.has(manifest.name)) continue;
   const entryPoints = [manifest.main, manifest.types]
     .filter(Boolean)
@@ -106,12 +107,17 @@ for (const { directory, manifest } of dependencyOrder(workspacePackages())) {
   pack(directory, manifest, entryPoints, []);
   alreadyPacked.add(manifest.name);
 }
-let releasePackages = packages;
+// Preserve archive order for independent packages, placing every dependency before its consumer.
+const packedByName = new Map(packages.map((entry) => [entry.name, entry]));
+const workspaceByName = new Map(workspace.map((entry) => [entry.manifest.name, entry]));
+let releasePackages = dependencyOrder(packages.map(({ name }) => workspaceByName.get(name))).map(
+  ({ manifest }) => packedByName.get(manifest.name),
+);
 if (existsSync(releasePlanPath)) {
   const plan = JSON.parse(readFileSync(releasePlanPath, 'utf8'));
   if (plan.mode !== 'check' && plan.packages.length > 0) {
     const selected = new Map(plan.packages.map(({ name, version }) => [name, version]));
-    releasePackages = packages.filter(({ name }) => selected.has(name));
+    releasePackages = releasePackages.filter(({ name }) => selected.has(name));
     if (
       releasePackages.length !== selected.size ||
       releasePackages.some(({ name, version }) => selected.get(name) !== version)

@@ -46,9 +46,4 @@ export const bloodhoundOptions = {
   // BLOODHOUND_STRICT=1 fails the build on any remaining global mutation.
   globals: process.env.BLOODHOUND_STRICT ? 'error' : 'warn',
   findings: 'warn',
-  onManifest(manifest, { diagnostics }) {
-    console.log(
-      `bloodhound: ${manifest.summary.sources} sources, ${manifest.summary.findings} findings, ${diagnostics.length} reported after filters`,
-    );
-  },
 };

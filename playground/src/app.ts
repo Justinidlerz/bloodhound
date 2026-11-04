@@ -8,8 +8,21 @@ import {
 } from './manifest.js';
 import { badge, bytes, count, html, human, time } from './format.js';
 import { groupList, inspector, recordList } from './views.js';
-import { DEFAULT_RADIUS, viewerTarget, type SourceText, type Viewer } from './source-view.js';
+import {
+  DEFAULT_RADIUS,
+  viewerTarget,
+  writeRows,
+  type SourceText,
+  type Viewer,
+} from './source-view.js';
 import { resolveManifestParam } from './autoload.js';
+import { englishMessages } from '@bloodhound-rs/playground';
+import {
+  fetchText,
+  OriginalSources,
+  type OriginalView,
+  type ProjectWorkspace,
+} from './original-sources.js';
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -24,6 +37,7 @@ const initialFilters = (): Filters => ({
   grouping: 'type',
   group: null,
   includeDependencies: false,
+  includePolyfills: false,
 });
 const maxBytes = 64 * 1024 * 1024;
 let index: ManifestIndex | undefined;
@@ -35,6 +49,21 @@ let pageSize = 50;
 let graphExpanded = false;
 let viewer: Viewer | undefined;
 const sourceTexts = new Map<string, SourceText>();
+let workspace: ProjectWorkspace | undefined;
+let originals = new OriginalSources();
+const originalView: OriginalView = { open: false, radius: DEFAULT_RADIUS, wrap: false };
+const workspaceReady = fetch('/__workspace', {
+  credentials: 'omit',
+  signal: AbortSignal.timeout(3000),
+})
+  .then((response) => (response.ok ? response.json() : undefined))
+  .then((value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    const config = value as ProjectWorkspace;
+    if (typeof config.projectRoot === 'string' && config.fileEndpoint === '/__project')
+      workspace = config;
+  })
+  .catch(() => undefined);
 let codeScrollKey = '';
 let visibleRows: RecordRow[] = [];
 let worker: Worker | undefined;
@@ -92,7 +121,10 @@ async function autoloadManifest() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     element('loading').hidden = true;
-    await openFile(new File([blob], target.name, { type: 'application/json' }));
+    await openFile(
+      new File([blob], target.name, { type: 'application/json' }),
+      response.url || target.url,
+    );
   } catch (error) {
     element('loading').hidden = true;
     const detail = error instanceof Error ? error.message : 'network error';
@@ -108,17 +140,20 @@ function syncViewer(row: RecordRow | undefined) {
     viewer = undefined;
     return;
   }
-  const target = viewerTarget(index, row);
+  const target = viewerTarget(index, row, workspace);
   if (!target || target.source.id !== viewer.sourceId) viewer = undefined;
   else viewer.url = target.url;
 }
 
 /** Centers the highlighted range inside the code viewer after a render. */
 function scrollCode() {
-  if (!viewer) return;
-  const key = `${selected}|${viewer.url}|${viewer.radius}|${viewer.wrap}`;
+  if (!viewer && !originalView.open) return;
+  const previewId = `${previewRow()?.id ?? ''}${originalView.declaration ? ':declaration' : ''}`;
+  const key = `${previewId}|${viewer?.url}|${viewer?.radius}|${viewer?.wrap}|${originalView.radius}|${originalView.wrap}|${originals.previews.get(previewId)?.status}`;
   if (key === codeScrollKey) return;
-  const view = element('inspector').querySelector<HTMLElement>('.code-view');
+  const view = element('inspector').querySelector<HTMLElement>(
+    originalView.open ? '.original-source .code-view' : '.code-view',
+  );
   if (!view) return;
   codeScrollKey = key;
   const hit = view.querySelector<HTMLElement>('.code-line.hit');
@@ -129,31 +164,54 @@ function scrollCode() {
   }
   view.scrollTop = Math.max(0, hit.offsetTop - view.clientHeight / 2 + hit.clientHeight / 2);
   const mark = hit.querySelector<HTMLElement>('mark');
-  if (mark && !viewer.wrap) view.scrollLeft = Math.max(0, mark.offsetLeft - view.clientWidth / 3);
+  if (mark && !(originalView.open ? originalView.wrap : viewer?.wrap))
+    view.scrollLeft = Math.max(0, mark.offsetLeft - view.clientWidth / 3);
 }
-
-const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
 
 /** Fetches a source file as text on explicit user request. Never executes it. */
 async function fetchSource(url: string) {
   if (sourceTexts.has(url)) return;
+  const owner = index;
   sourceTexts.set(url, { status: 'loading' });
   render();
   try {
-    const response = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const declared = Number(response.headers.get('content-length') ?? 0);
-    if (declared > MAX_SOURCE_BYTES) throw new Error('file larger than 8 MiB');
-    const text = await response.text();
-    if (text.length > MAX_SOURCE_BYTES) throw new Error('file larger than 8 MiB');
+    const { text } = await fetchText(url);
+    if (owner !== index) return;
     sourceTexts.set(url, { status: 'ready', text });
   } catch (error) {
+    if (owner !== index) return;
     sourceTexts.set(url, {
       status: 'error',
       error: error instanceof Error ? error.message : 'network error',
     });
   }
   render();
+}
+
+function previewRow() {
+  const row = selected ? index?.byId.get(selected) : undefined;
+  return row ? (writeRows(row)[originalView.write ?? 0] ?? row) : undefined;
+}
+
+function previewOriginal(retry = false) {
+  const row = previewRow();
+  const source = row?.source ? index?.sources.get(row.source) : undefined;
+  const location = row && 'location' in row.data ? row.data.location : undefined;
+  if (!row || !source || !originals.reference(source) || !location) {
+    originalView.open = false;
+    return;
+  }
+  originalView.open = true;
+  const session = originals;
+  const declaration = 'declaration' in row.data ? row.data.declaration : undefined;
+  originalView.declaration = Boolean(originalView.declaration && declaration);
+  const pending =
+    originalView.declaration && declaration
+      ? session.previewDeclaration(row.id, source, location, declaration, retry)
+      : session.preview(row.id, source, location, retry);
+  void pending.then(() => {
+    if (session === originals) render();
+  });
 }
 function syncFilters() {
   element<HTMLInputElement>('search').value = filters.query;
@@ -192,6 +250,19 @@ function render(updateDetails = true) {
     : undefined;
   const base = index.baseRows(filters);
   visibleRows = index.filter(base, filters);
+  element('count-findings').textContent = count(
+    index.rows.findings.length - (filters.includePolyfills ? 0 : index.polyfills.size),
+  );
+  element('polyfill-control').hidden = filters.view !== 'findings' || index.polyfills.size === 0;
+  element('polyfill-summary').textContent = englishMessages[
+    filters.includePolyfills ? 'polyfill.included' : 'polyfill.hidden'
+  ].replace('{count}', count(index.polyfills.size));
+  element('polyfill-toggle').textContent =
+    englishMessages[filters.includePolyfills ? 'polyfill.hide' : 'polyfill.show'];
+  element('polyfill-toggle').setAttribute(
+    'aria-pressed',
+    String(Boolean(filters.includePolyfills)),
+  );
   const pages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   page = Math.max(0, Math.min(page, pages - 1));
   if (selected && !visibleRows.some((row) => row.id === selected)) {
@@ -246,6 +317,8 @@ function render(updateDetails = true) {
         graphExpanded,
         viewer,
         sourceTexts,
+        originals,
+        originalView,
       ),
     );
     scrollCode();
@@ -332,7 +405,8 @@ function header(file: File) {
     element(`count-${view}`).textContent = count(index.rows[view].length);
 }
 
-async function openFile(file: File) {
+async function openFile(file: File, manifestUrl?: string) {
+  await workspaceReady;
   if (file.size > maxBytes) {
     message('This file is larger than 64 MiB. Choose a smaller manifest.');
     return;
@@ -369,6 +443,10 @@ async function openFile(file: File) {
       graphExpanded = false;
       viewer = undefined;
       sourceTexts.clear();
+      originals = new OriginalSources(manifestUrl, workspace);
+      originalView.open = false;
+      originalView.write = 0;
+      originalView.radius = DEFAULT_RADIUS;
       codeScrollKey = '';
       selected = index.rows.findings[0]?.id ?? index.rows.sources[0]?.id ?? null;
       if (selected) {
@@ -402,10 +480,15 @@ async function openFile(file: File) {
 function selectRecord(id: string) {
   if (!index?.byId.has(id)) return;
   const changed = selected !== id;
+  if (changed) originalView.write = 0;
   selected = id;
   graphExpanded = false;
   syncViewer(index.byId.get(id));
   if (viewer && changed) viewer.radius = DEFAULT_RADIUS;
+  if (originalView.open) {
+    if (changed) originalView.radius = DEFAULT_RADIUS;
+    previewOriginal();
+  }
   render();
   const inspectorEl = element('inspector');
   const panel = viewer ? inspectorEl.querySelector<HTMLElement>('.code-panel') : null;
@@ -438,18 +521,21 @@ function closeDetails() {
 }
 
 function navigate(view: View, source?: string, status = '') {
+  originalView.write = 0;
   filters = {
     ...initialFilters(),
     view,
     severity: status,
     grouping: source ? 'source' : filters.grouping,
     group: source ?? null,
+    includePolyfills: filters.includePolyfills,
   };
   groupQuery = '';
   page = 0;
   selected = null;
   graphExpanded = false;
   viewer = undefined;
+  originalView.open = false;
   document.body.classList.remove('detail-open');
   syncFilters();
   render();
@@ -472,6 +558,24 @@ async function copy(text: string, confirmation: string) {
     toast('Clipboard is unavailable. Select and copy the raw record instead.');
   }
 }
+
+document.addEventListener('submit', (event) => {
+  if (!(event.target instanceof HTMLFormElement) || event.target.id !== 'source-map-form') return;
+  event.preventDefault();
+  const row = selected ? index?.byId.get(selected) : undefined;
+  const source = row?.source ? index?.sources.get(row.source) : undefined;
+  if (!source) return;
+  try {
+    originals.link(source, element<HTMLInputElement>('source-map-input').value);
+    originalView.radius = DEFAULT_RADIUS;
+    codeScrollKey = '';
+    previewOriginal();
+    render();
+    toast('Source map linked for this session');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Could not link source map');
+  }
+});
 
 document.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
@@ -499,6 +603,8 @@ document.addEventListener('click', (event) => {
     graphExpanded = false;
     viewer = undefined;
     sourceTexts.clear();
+    originals = new OriginalSources(undefined, workspace);
+    originalView.open = false;
     codeScrollKey = '';
     element('workspace').hidden = true;
     element('welcome').hidden = false;
@@ -522,6 +628,58 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (!index) return;
+  if (action === 'write-select') {
+    originalView.write = Number(button.dataset.write);
+    originalView.declaration = false;
+    originalView.radius = DEFAULT_RADIUS;
+    codeScrollKey = '';
+    const row = previewRow();
+    syncViewer(row);
+    previewOriginal();
+    if (!originalView.open && row) {
+      const target = viewerTarget(index, row, workspace);
+      if (target) {
+        viewer = {
+          sourceId: target.source.id,
+          url: target.url,
+          radius: DEFAULT_RADIUS,
+          wrap: false,
+        };
+        void fetchSource(target.url);
+      }
+    }
+    render();
+    return;
+  }
+  if (
+    action === 'original-open' ||
+    action === 'original-retry' ||
+    action === 'declaration-open' ||
+    action === 'write-open'
+  ) {
+    if (action === 'declaration-open' || action === 'write-open')
+      originalView.declaration = action === 'declaration-open';
+    originalView.radius = DEFAULT_RADIUS;
+    codeScrollKey = '';
+    previewOriginal(action === 'original-retry');
+    render();
+    return;
+  }
+  if (action === 'original-close' || action === 'original-expand' || action === 'original-wrap') {
+    if (action === 'original-close') originalView.open = false;
+    if (action === 'original-expand') originalView.radius = Math.min(originalView.radius * 3, 5000);
+    if (action === 'original-wrap') originalView.wrap = !originalView.wrap;
+    render();
+    return;
+  }
+  if (action === 'map-unlink') {
+    const row = selected ? index.byId.get(selected) : undefined;
+    const source = row?.source ? index.sources.get(row.source) : undefined;
+    if (source) originals.unlink(source);
+    originalView.open = false;
+    render();
+    return;
+  }
   if (action === 'record') {
     selectRecord(button.dataset.record!);
     return;
@@ -536,6 +694,7 @@ document.addEventListener('click', (event) => {
       view: target.view,
       grouping: target.source ? 'source' : 'type',
       group: target.source ?? null,
+      includePolyfills: filters.includePolyfills || index.polyfills.has(target.id),
     };
     groupQuery = '';
     syncFilters();
@@ -546,8 +705,8 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (action === 'source-open' || action === 'source-retry') {
-    const row = selected ? index.byId.get(selected) : undefined;
-    const target = row && viewerTarget(index, row);
+    const row = previewRow();
+    const target = row && viewerTarget(index, row, workspace);
     if (!target) return;
     viewer = {
       sourceId: target.source.id,
@@ -612,6 +771,12 @@ document.addEventListener('click', (event) => {
     page += action === 'previous-page' ? -1 : 1;
     render(false);
     element('record-list').scrollTop = 0;
+    return;
+  }
+  if (action === 'toggle-polyfills') {
+    filters.includePolyfills = !filters.includePolyfills;
+    page = 0;
+    render();
     return;
   }
   if (action === 'reset-filters') {

@@ -137,6 +137,8 @@ pub fn extract(source: &str, url: &str, max_steps: usize) -> Analysis {
                                     operation: "style".into(),
                                     confidence: Confidence::High,
                                     detail: Some(style.trim().to_string()),
+                                    polyfill: None,
+                                    declaration: None,
                                 });
                             }
                         }
