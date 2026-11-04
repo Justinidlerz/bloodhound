@@ -1,6 +1,6 @@
 {
   "name": "@bloodhound-rs/manifest",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Browser-safe manifest parsing, indexing and source previews",
   "type": "module",
   "license": "MIT",
