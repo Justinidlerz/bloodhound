@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -82,7 +83,16 @@ export function workspace(t) {
   ])
     copy(dir, path);
   const targets = readJson(join(dir, '.github/native-targets.json'));
-  for (const { platform } of targets) copy(dir, `npm/${platform}/package.json`);
+  for (const { platform } of targets) {
+    copy(dir, `npm/${platform}/package.json`);
+    const modules = join(root, 'npm', platform, 'node_modules');
+    if (existsSync(modules))
+      symlinkSync(
+        modules,
+        join(dir, 'npm', platform, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+  }
   symlinkSync(
     join(root, 'node_modules'),
     join(dir, 'node_modules'),

@@ -9,6 +9,7 @@ use crate::resolve;
 use crate::scheduler::Cancellation;
 use std::fs::{self, File};
 use std::io::Read;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use url::Url;
 
@@ -23,25 +24,44 @@ pub struct Loaded {
 
 /// Shared loader state. Construct once per scan.
 pub struct Loader {
+    #[cfg(not(target_arch = "wasm32"))]
     client: Option<reqwest::blocking::Client>,
+    #[cfg(target_arch = "wasm32")]
+    http: Option<std::sync::Arc<crate::wasi_http::HostHttp>>,
     options: Options,
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct HttpResponse {
+    status: u16,
+    location: Option<String>,
+    content: Result<String, String>,
+}
+
 impl Loader {
-    pub fn new(options: &Options) -> Result<Self, String> {
-        let mut builder = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_millis(
-                options.budgets.resource_timeout_ms.max(1),
-            ))
-            .user_agent(concat!("bloodhound/", env!("CARGO_PKG_VERSION")));
-        if let Some(proxy) = &options.proxy {
-            builder =
-                builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| e.without_url().to_string())?);
-        }
-        let client = Some(builder.build().map_err(|e| e.without_url().to_string())?);
+    pub fn new(
+        options: &Options,
+        #[cfg(target_arch = "wasm32")] http: Option<std::sync::Arc<crate::wasi_http::HostHttp>>,
+    ) -> Result<Self, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let client = {
+            let mut builder = reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_millis(
+                    options.budgets.resource_timeout_ms.max(1),
+                ))
+                .user_agent(concat!("bloodhound/", env!("CARGO_PKG_VERSION")));
+            if let Some(proxy) = &options.proxy {
+                builder = builder
+                    .proxy(reqwest::Proxy::all(proxy).map_err(|e| e.without_url().to_string())?);
+            }
+            Some(builder.build().map_err(|e| e.without_url().to_string())?)
+        };
         Ok(Self {
+            #[cfg(not(target_arch = "wasm32"))]
             client,
+            #[cfg(target_arch = "wasm32")]
+            http,
             options: options.clone(),
         })
     }
@@ -92,7 +112,6 @@ impl Loader {
     }
 
     fn load_http(&self, url: &str, cancel: &Cancellation) -> Result<Loaded, String> {
-        let client = self.client.as_ref().ok_or("http-client-unavailable")?;
         let budgets = &self.options.budgets;
         let mut last_error = "resource-load-failed".to_string();
         for _attempt in 0..=budgets.retries {
@@ -100,44 +119,29 @@ impl Loader {
             for redirect in 0..=budgets.max_redirects {
                 cancel.check()?;
                 let parsed = authorize(&current, &self.options.access)?;
-                let mut request = client.get(parsed.clone());
-                let host = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
-                if let Some(headers) = self.options.request_headers.get(host) {
-                    for (name, value) in headers {
-                        request = request.header(name, value);
-                    }
-                }
-                let response = match request.send() {
+                let response = match self.request_http(&parsed, cancel) {
                     Ok(r) => r,
                     Err(e) => {
-                        last_error = e.without_url().to_string();
+                        last_error = e;
                         break; // retry
                     }
                 };
-                if response.status().is_redirection() {
+                if (300..400).contains(&response.status) {
                     if redirect == budgets.max_redirects {
                         return Err("redirect-budget".into());
                     }
                     let location = response
-                        .headers()
-                        .get("location")
-                        .and_then(|h| h.to_str().ok())
+                        .location
+                        .as_deref()
                         .ok_or("redirect-without-location")?;
                     current = resolve::join(&current, location)?;
                     continue;
                 }
-                if !response.status().is_success() {
-                    last_error = format!("http-status-{}", response.status().as_u16());
+                if !(200..300).contains(&response.status) {
+                    last_error = format!("http-status-{}", response.status);
                     break;
                 }
-                if response
-                    .content_length()
-                    .is_some_and(|n| n > budgets.max_resource_bytes as u64)
-                {
-                    return Err("resource-byte-budget".into());
-                }
-                let bytes = read_bounded(response, budgets.max_resource_bytes, cancel)?;
-                let content = String::from_utf8(bytes).map_err(|_| "invalid-utf8".to_string())?;
+                let content = response.content?;
                 return Ok(Loaded {
                     bytes: content.len(),
                     content,
@@ -146,6 +150,48 @@ impl Loader {
             }
         }
         Err(last_error)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn request_http(&self, parsed: &Url, cancel: &Cancellation) -> Result<HttpResponse, String> {
+        let client = self.client.as_ref().ok_or("http-client-unavailable")?;
+        let mut request = client.get(parsed.clone());
+        let host = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
+        if let Some(headers) = self.options.request_headers.get(host) {
+            for (name, value) in headers {
+                request = request.header(name, value);
+            }
+        }
+        let response = request.send().map_err(|e| e.without_url().to_string())?;
+        let status = response.status();
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_owned);
+        let limit = self.options.budgets.max_resource_bytes;
+        let content = if !status.is_success() {
+            Ok(String::new())
+        } else if response.content_length().is_some_and(|n| n > limit as u64) {
+            Err("resource-byte-budget".into())
+        } else {
+            read_bounded(response, limit, cancel)
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|_| "invalid-utf8".into()))
+        };
+        Ok(HttpResponse {
+            status: status.as_u16(),
+            location,
+            content,
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn request_http(&self, parsed: &Url, cancel: &Cancellation) -> Result<HttpResponse, String> {
+        cancel.check()?;
+        let http = self.http.as_ref().ok_or("http-host-unavailable")?;
+        let response = crate::wasi_http::request(http, parsed, &self.options)?;
+        cancel.check()?;
+        Ok(response)
     }
 }
 

@@ -20,8 +20,14 @@ function packageFixture(t) {
   );
   for (const file of ['dist/index.d.ts', 'dist/native.js', 'dist/native.d.ts', 'dist/types.d.ts'])
     write(dir, file, 'export {};\n');
-  for (const { platform } of readJson(join(dir, '.github/native-targets.json')))
-    write(dir, `dist/${pkg.napi.binaryName}.${platform}.node`, `binary fixture for ${platform}`);
+  for (const { platform, wasi } of readJson(join(dir, '.github/native-targets.json'))) {
+    if (wasi) {
+      for (const file of readJson(join(dir, `npm/${platform}/package.json`)).files)
+        write(dir, `artifacts/wasi/${file}`, `binding fixture for ${platform}`);
+    } else {
+      write(dir, `dist/${pkg.napi.binaryName}.${platform}.node`, `binary fixture for ${platform}`);
+    }
+  }
   return dir;
 }
 test('packaging creates one binary per platform, a binary-free core, and an ordered integrity manifest', (t) => {

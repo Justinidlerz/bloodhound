@@ -92,15 +92,15 @@ test('platform sync uses napi metadata for every build target', (t) => {
   const dir = workspace(t);
   success(run(dir, 'scripts/sync-platform-packages.mjs'));
   const pkg = readJson(join(dir, 'package.json'));
-  for (const { platform } of readJson(join(dir, '.github/native-targets.json'))) {
+  for (const { platform, wasi } of readJson(join(dir, '.github/native-targets.json'))) {
     const generated = readJson(join(dir, `npm/${platform}/package.json`));
     assert.equal(generated.name, `${pkg.name}-${platform}`);
     assert.equal(generated.version, pkg.version);
-    assert.deepEqual(generated.files, [generated.main]);
+    assert.ok(generated.files.includes(generated.main));
     assert.equal(generated.license, 'MIT');
     const [os, cpu, abi] = platform.split('-');
-    assert.deepEqual(generated.os, [os]);
-    assert.deepEqual(generated.cpu, [cpu]);
+    assert.deepEqual(generated.os, wasi ? undefined : [os]);
+    assert.deepEqual(generated.cpu, wasi ? undefined : [cpu]);
     if (abi === 'gnu') assert.deepEqual(generated.libc, ['glibc']);
     assert.ok(existsSync(join(dir, `npm/${platform}/README.md`)));
   }

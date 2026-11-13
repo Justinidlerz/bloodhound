@@ -6,6 +6,11 @@ native/*.node
 outputs/
 log/
 npm/**/*.node
+npm/**/*.wasm
+npm/wasm32-wasi/*.cjs
+npm/wasm32-wasi/*.mjs
+npm/wasm32-wasi/*.cts
+npm/wasm32-wasi/types.d.ts
 npm/*/LICENSE
 artifacts/
 .DS_Store

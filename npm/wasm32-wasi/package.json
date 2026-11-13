@@ -1,0 +1,38 @@
+{
+  "name": "@bloodhound-rs/core-wasm32-wasi",
+  "version": "0.3.0",
+  "main": "index.cjs",
+  "files": [
+    "bloodhound.wasm32-wasi.wasm",
+    "bloodhound.wasi.cjs",
+    "bloodhound.wasi.d.cts",
+    "wasi-worker.mjs",
+    "index.cjs",
+    "types.d.ts"
+  ],
+  "description": "Rust static scanner that finds global-environment pollution in JavaScript and HTML",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0 <23.0.0-0 || >=23.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Justinidlerz/bloodhound.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "types": "bloodhound.wasi.d.cts",
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/wasm-runtime": "~1.2.7",
+    "@emnapi/core": "2.0.0-beta.3",
+    "@emnapi/runtime": "2.0.0-beta.3",
+    "undici": "^7.30.2",
+    "@bloodhound-rs/manifest": "workspace:*"
+  },
+  "imports": {
+    "#binding": "./bloodhound.wasi.cjs"
+  }
+}

@@ -28,7 +28,7 @@
     "build:ts": "pnpm build:manifest && tsc -p tsconfig.json",
     "build:plugin": "pnpm --filter @bloodhound-rs/rollup-plugin build",
     "build:js": "pnpm build:ts && pnpm build:plugin && pnpm build:playground-package",
-    "build": "node scripts/clean-dist.mjs && pnpm build:native && pnpm build:js",
+    "build": "node scripts/clean-dist.mjs && pnpm build:native && pnpm build:js && node scripts/assemble-wasi.mjs --if-present",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2023 tests/types.test.ts && pnpm --filter @bloodhound-rs/rollup-plugin typecheck && pnpm typecheck:playground && pnpm --filter @bloodhound-rs/manifest typecheck && pnpm --filter @bloodhound-rs/playground typecheck",
     "prepack": "pnpm build",
     "example": "node examples/scan.mjs",
@@ -51,7 +51,9 @@
     "test:sdk": "node --test tests/sdk.test.mjs",
     "test:plugin": "pnpm --filter @bloodhound-rs/rollup-plugin test",
     "build:manifest": "pnpm --filter @bloodhound-rs/manifest build",
-    "build:playground-package": "pnpm --filter @bloodhound-rs/playground... build"
+    "build:playground-package": "pnpm --filter @bloodhound-rs/playground... build",
+    "build:wasi": "node scripts/build-native.mjs --wasi && pnpm build:js && node scripts/assemble-wasi.mjs",
+    "test:wasi": "node --import ./scripts/load-wasi.mjs --test tests/sdk.test.mjs packages/rollup-plugin/tests/plugin.test.mjs"
   },
   "devDependencies": {
     "@bloodhound-rs/rollup-plugin": "workspace:*",
@@ -67,7 +69,10 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0"
+    "@types/react-dom": "^18.3.0",
+    "emnapi": "2.0.0-beta.3",
+    "@emnapi/core": "2.0.0-beta.3",
+    "@emnapi/runtime": "2.0.0-beta.3"
   },
   "napi": {
     "binaryName": "bloodhound",
@@ -76,7 +81,8 @@
       "aarch64-unknown-linux-gnu",
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",
-      "x86_64-pc-windows-msvc"
+      "x86_64-pc-windows-msvc",
+      "wasm32-wasip1-threads"
     ]
   },
   "publishConfig": {
@@ -93,7 +99,8 @@
     "@bloodhound-rs/core-darwin-x64": "workspace:*",
     "@bloodhound-rs/core-linux-arm64-gnu": "workspace:*",
     "@bloodhound-rs/core-linux-x64-gnu": "workspace:*",
-    "@bloodhound-rs/core-win32-x64-msvc": "workspace:*"
+    "@bloodhound-rs/core-win32-x64-msvc": "workspace:*",
+    "@bloodhound-rs/core-wasm32-wasi": "workspace:*"
   },
   "dependencies": {
     "@bloodhound-rs/manifest": "workspace:*"

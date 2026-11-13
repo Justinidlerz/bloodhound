@@ -116,6 +116,7 @@ name = "bloodhound_core"
 version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
+ "futures",
  "html5gum",
  "napi",
  "napi-build",

@@ -9,7 +9,8 @@
       "@bloodhound-rs/core-linux-arm64-gnu",
       "@bloodhound-rs/core-darwin-arm64",
       "@bloodhound-rs/core-darwin-x64",
-      "@bloodhound-rs/core-win32-x64-msvc"
+      "@bloodhound-rs/core-win32-x64-msvc",
+      "@bloodhound-rs/core-wasm32-wasi"
     ]
   ],
   "linked": [],
