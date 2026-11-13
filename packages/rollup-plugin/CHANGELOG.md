@@ -1,5 +1,12 @@
 # @bloodhound-rs/rollup-plugin
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [0d06ab9]
+  - @bloodhound-rs/core@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

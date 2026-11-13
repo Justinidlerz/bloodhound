@@ -1,6 +1,6 @@
 {
   "name": "@bloodhound-rs/core-wasm32-wasi",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "main": "index.cjs",
   "files": [
     "bloodhound.wasm32-wasi.wasm",
