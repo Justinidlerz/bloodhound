@@ -18,6 +18,8 @@ mod model;
 mod report;
 mod resolve;
 mod scheduler;
+#[cfg(target_arch = "wasm32")]
+mod wasi_http;
 
 use napi::bindgen_prelude::{AsyncTask, FnArgs, Function, FunctionRef, Object, ObjectRef};
 use napi::{Env, Task};
@@ -32,6 +34,8 @@ pub struct ScanTask {
     flag: Arc<AtomicBool>,
     /// `(signal, listener)` to detach when the task finishes.
     listener: Option<(ObjectRef, FunctionRef<(), ()>)>,
+    #[cfg(target_arch = "wasm32")]
+    http: Option<Arc<wasi_http::HostHttp>>,
 }
 
 impl Task for ScanTask {
@@ -39,7 +43,13 @@ impl Task for ScanTask {
     type JsValue = String;
 
     fn compute(&mut self) -> napi::Result<String> {
-        scan_json(&self.request, self.flag.clone()).map_err(napi::Error::from_reason)
+        scan_json(
+            &self.request,
+            self.flag.clone(),
+            #[cfg(target_arch = "wasm32")]
+            self.http.clone(),
+        )
+        .map_err(napi::Error::from_reason)
     }
 
     fn resolve(&mut self, _env: Env, output: String) -> napi::Result<String> {
@@ -65,10 +75,19 @@ impl Task for ScanTask {
 }
 
 /// Parses the request, runs the scheduler, and serializes the manifest.
-pub(crate) fn scan_json(request: &str, flag: Arc<AtomicBool>) -> Result<String, String> {
+pub(crate) fn scan_json(
+    request: &str,
+    flag: Arc<AtomicBool>,
+    #[cfg(target_arch = "wasm32")] http: Option<Arc<wasi_http::HostHttp>>,
+) -> Result<String, String> {
     let request: model::Request =
         serde_json::from_str(request).map_err(|e| format!("invalid-request: {e}"))?;
-    let graph = scheduler::run(&request, flag)?;
+    let graph = scheduler::run(
+        &request,
+        flag,
+        #[cfg(target_arch = "wasm32")]
+        http,
+    )?;
     let manifest = report::build(graph, request.options.dependency_mode);
     serde_json::to_string(&manifest).map_err(|e| e.to_string())
 }
@@ -79,8 +98,18 @@ fn start(env: Env, entries: Value, options: Option<Object>) -> napi::Result<Asyn
     let flag = Arc::new(AtomicBool::new(false));
     let mut config = json!({});
     let mut listener = None;
+    #[cfg(target_arch = "wasm32")]
+    let mut http = None;
     if let Some(options) = options {
+        #[cfg(target_arch = "wasm32")]
+        {
+            http = wasi_http::from_options(&options)?;
+        }
         for key in Object::keys(&options)? {
+            #[cfg(target_arch = "wasm32")]
+            if key == "__bloodhoundHttp" {
+                continue;
+            }
             if key == "signal" {
                 continue;
             }
@@ -116,6 +145,8 @@ fn start(env: Env, entries: Value, options: Option<Object>) -> napi::Result<Asyn
         request,
         flag,
         listener,
+        #[cfg(target_arch = "wasm32")]
+        http,
     }))
 }
 

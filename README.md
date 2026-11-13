@@ -10,7 +10,7 @@ CSS files and inline `<style>` blocks are discovered and listed. CSS selectors, 
 pnpm add @bloodhound-rs/core
 ```
 
-Requires Node.js 22.12+. Keep optional dependencies enabled so the native package for the current platform is installed. Supported targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Linux musl is not supported.
+Requires Node.js 22.12+. Keep optional dependencies enabled so the native package for the current platform is installed. Prebuilt native targets are macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. The WASI fallback runs on Node.js 22.13+ (or 23.5+) when a native binding cannot load, including Linux musl. It uses the same Rust scanner and delegates HTTP transport to Node.js.
 
 ESM `import` and CommonJS `require('@bloodhound-rs/core')` load the same synchronous module graph. CommonJS loading uses Node.js 22.12+'s native `require(esm)` support; no dynamic import or initialization wrapper is needed.
 

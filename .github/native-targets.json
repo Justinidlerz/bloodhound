@@ -28,5 +28,12 @@
     "target": "x86_64-pc-windows-msvc",
     "platform": "win32-x64-msvc",
     "sdk": false
+  },
+  {
+    "runner": "ubuntu-24.04",
+    "target": "wasm32-wasip1-threads",
+    "platform": "wasm32-wasi",
+    "sdk": false,
+    "wasi": true
   }
 ]

@@ -101,20 +101,34 @@ jobs:
           key: ${{ matrix.target }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:rust
+        if: ${{ !matrix.wasi }}
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test:sdk
+        if: ${{ !matrix.wasi }}
       - run: pnpm test:plugin
+        if: ${{ !matrix.wasi }}
+      - run: pnpm test:wasi
+        if: matrix.wasi
       - name: Run examples and save their JSON output
         shell: bash
+        env:
+          NODE_OPTIONS: ${{ matrix.wasi && format('--import={0}/scripts/load-wasi.mjs', github.workspace) || '' }}
         run: |
           mkdir -p outputs/example outputs/example-html
           node examples/scan.mjs > outputs/example/report.json
           node examples/scan-html.mjs > outputs/example-html/report.json
       - uses: actions/upload-artifact@v4
+        if: ${{ !matrix.wasi }}
         with:
           name: native-${{ matrix.platform }}
           path: dist/*.node
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.wasi
+        with:
+          name: wasi-bindings
+          path: artifacts/wasi/*
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: matrix.sdk
@@ -161,6 +175,10 @@ jobs:
         with:
           name: sdk-bindings
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasi-bindings
+          path: artifacts/wasi
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build workspace JavaScript packages against the collected SDK
         run: pnpm build:js

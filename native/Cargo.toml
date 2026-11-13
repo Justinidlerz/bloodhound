@@ -29,12 +29,17 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Resource loading
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
 url = { version = "2", features = ["serde"] }
 # Content identity and source maps
 sha2 = "0.10"
 sourcemap = "=9.3.2"
 base64 = "0.22"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = "0.3"
 
 [build-dependencies]
 napi-build = "2"

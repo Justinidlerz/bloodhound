@@ -158,13 +158,21 @@ fn compile_exclude(patterns: &[String]) -> Result<regex::RegexSet, String> {
 }
 
 /// Runs a scan and returns the resource graph.
-pub fn run(request: &Request, flag: Arc<AtomicBool>) -> Result<Graph, String> {
+pub fn run(
+    request: &Request,
+    flag: Arc<AtomicBool>,
+    #[cfg(target_arch = "wasm32")] http: Option<Arc<crate::wasi_http::HostHttp>>,
+) -> Result<Graph, String> {
     let started = Instant::now();
     let options = &request.options;
     validate(request)?;
     let exclude = compile_exclude(&options.exclude_urls)?;
     let cancel = Cancellation::new(flag, Duration::from_millis(options.budgets.timeout_ms));
-    let loader = Arc::new(Loader::new(options)?);
+    let loader = Arc::new(Loader::new(
+        options,
+        #[cfg(target_arch = "wasm32")]
+        http,
+    )?);
 
     let mut coordinator = Coordinator::new(options, cancel.clone(), exclude);
     for entry in &request.entries {

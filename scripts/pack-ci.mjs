@@ -15,7 +15,10 @@ import { dependencyOrder, releasePlanPath, workspacePackages } from './workspace
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const targets = JSON.parse(readFileSync('.github/native-targets.json', 'utf8'));
-const expected = targets.map(({ platform }) => `${pkg.napi.binaryName}.${platform}.node`).sort();
+const expected = targets
+  .filter(({ wasi }) => !wasi)
+  .map(({ platform }) => `${pkg.napi.binaryName}.${platform}.node`)
+  .sort();
 const actual = readdirSync('dist')
   .filter((name) => name.endsWith('.node'))
   .sort();
@@ -61,20 +64,23 @@ function pack(directory, manifest, required, nativeFiles) {
   packages.push(entry);
   return packed;
 }
-for (const { platform } of targets) {
+if (targets.some(({ wasi }) => wasi)) {
+  execFileSync(process.execPath, ['scripts/assemble-wasi.mjs'], { stdio: 'inherit' });
+}
+for (const { platform, wasi } of targets) {
   const directory = join('npm', platform);
   const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
   const binary = `${pkg.napi.binaryName}.${platform}.node`;
   if (
     manifest.name !== `${pkg.name}-${platform}` ||
     manifest.version !== pkg.version ||
-    manifest.main !== binary
+    (!wasi && manifest.main !== binary)
   ) {
     throw new Error(`Platform metadata mismatch: ${platform}`);
   }
-  copyFileSync(join('dist', binary), join(directory, binary));
+  if (!wasi) copyFileSync(join('dist', binary), join(directory, binary));
   copyFileSync('LICENSE', join(directory, 'LICENSE'));
-  pack(directory, manifest, [binary], [binary]);
+  pack(directory, manifest, wasi ? manifest.files : [binary], wasi ? [] : [binary]);
 }
 const platformPackages = [...packages];
 const packed = pack(
