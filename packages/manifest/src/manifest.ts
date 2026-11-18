@@ -361,6 +361,17 @@ export class ManifestIndex {
     return visited;
   }
 
+  findingSummary(includePolyfills = false) {
+    const findings = includePolyfills
+      ? this.rows.findings
+      : this.rows.findings.filter((row) => !this.polyfills.has(row.id));
+    return {
+      types: this.groups(findings, 'type'),
+      errors: findings.filter((row) => row.status === 'error'),
+      warnings: findings.reduce((count, row) => count + Number(row.status === 'warning'), 0),
+    };
+  }
+
   baseRows(filters: Filters): RecordRow[] {
     const words = filters.query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     return this.rows[filters.view].filter(

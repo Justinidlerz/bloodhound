@@ -1,5 +1,7 @@
 # @bloodhound-rs/playground
 
+The viewer opens on the Dashboard. It shows counts by finding type and severity, then lists every error. Select an error to open its details in Findings. Both views share the polyfill visibility setting.
+
 React 18/19 components for Manifest v2. The viewer and resource selector are independent exports. Neither depends on the scanner's native binary or an application router.
 
 Module-state records with `declaration` metadata open at the variable definition by default. Switch between declaration and write positions to preview generated code or the original source, using the same UI adapters, text loader and message overrides. Records without declaration metadata open at the write position.

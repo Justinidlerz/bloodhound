@@ -381,6 +381,17 @@ h4 {
   font-size: 10px;
   color: #919ba7;
 }
+#dashboard {
+  overflow: auto;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.workspace > .tabs {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
 .explorer {
   --col-sidebar: 222px;
   --col-inspector: minmax(350px, 0.96fr);

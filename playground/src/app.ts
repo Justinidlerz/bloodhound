@@ -7,7 +7,7 @@ import {
   type View,
 } from './manifest.js';
 import { badge, bytes, count, html, human, time } from './format.js';
-import { groupList, inspector, recordList } from './views.js';
+import { dashboard, groupList, inspector, recordList } from './views.js';
 import {
   DEFAULT_RADIUS,
   viewerTarget,
@@ -39,9 +39,11 @@ const initialFilters = (): Filters => ({
   includeDependencies: false,
   includePolyfills: false,
 });
+element('dashboard-tab').textContent = englishMessages['view.dashboard'];
 const maxBytes = 64 * 1024 * 1024;
 let index: ManifestIndex | undefined;
 let filters = initialFilters();
+let showDashboard = true;
 let selected: string | null = null;
 let groupQuery = '';
 let page = 0;
@@ -235,7 +237,10 @@ function syncFilters() {
   element('confidence-control').hidden = filters.view !== 'findings';
   element<HTMLSelectElement>('confidence-filter').value = filters.confidence;
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="view"]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.view === filters.view));
+    button.setAttribute(
+      'aria-pressed',
+      String(button.dataset.view === (showDashboard ? 'dashboard' : filters.view)),
+    );
   }
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="grouping"]')) {
     button.setAttribute('aria-pressed', String(button.dataset.mode === filters.grouping));
@@ -248,12 +253,14 @@ function render(updateDetails = true) {
   const groupFocus = focused?.dataset.action?.startsWith('group')
     ? { action: focused.dataset.action, group: focused.dataset.group }
     : undefined;
-  const base = index.baseRows(filters);
-  visibleRows = index.filter(base, filters);
+  element('dashboard').hidden = !showDashboard;
+  element('explorer').hidden = showDashboard;
+  element('stats').hidden = showDashboard;
   element('count-findings').textContent = count(
     index.rows.findings.length - (filters.includePolyfills ? 0 : index.polyfills.size),
   );
-  element('polyfill-control').hidden = filters.view !== 'findings' || index.polyfills.size === 0;
+  element('polyfill-control').hidden =
+    (!showDashboard && filters.view !== 'findings') || index.polyfills.size === 0;
   element('polyfill-summary').textContent = englishMessages[
     filters.includePolyfills ? 'polyfill.included' : 'polyfill.hidden'
   ].replace('{count}', count(index.polyfills.size));
@@ -263,6 +270,12 @@ function render(updateDetails = true) {
     'aria-pressed',
     String(Boolean(filters.includePolyfills)),
   );
+  if (showDashboard) {
+    element('dashboard').innerHTML = String(dashboard(index, Boolean(filters.includePolyfills)));
+    return;
+  }
+  const base = index.baseRows(filters);
+  visibleRows = index.filter(base, filters);
   const pages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   page = Math.max(0, Math.min(page, pages - 1));
   if (selected && !visibleRows.some((row) => row.id === selected)) {
@@ -448,16 +461,13 @@ async function openFile(file: File, manifestUrl?: string) {
       originalView.write = 0;
       originalView.radius = DEFAULT_RADIUS;
       codeScrollKey = '';
-      selected = index.rows.findings[0]?.id ?? index.rows.sources[0]?.id ?? null;
-      if (selected) {
-        filters.view = index.byId.get(selected)!.view;
-        page = Math.floor(index.byId.get(selected)!.index / pageSize);
-      }
+      selected = null;
+      showDashboard = true;
+      visibleRows = [];
       document.body.classList.remove('detail-open');
       element('welcome').hidden = true;
       element('workspace').hidden = false;
       element('clear-button').hidden = false;
-      clampPanels();
       header(file);
       syncFilters();
       render();
@@ -520,11 +530,12 @@ function closeDetails() {
   }
 }
 
-function navigate(view: View, source?: string, status = '') {
+function navigate(view: View | 'dashboard', source?: string, status = '', recordId?: string) {
+  showDashboard = view === 'dashboard';
   originalView.write = 0;
   filters = {
     ...initialFilters(),
-    view,
+    view: view === 'dashboard' ? 'findings' : view,
     severity: status,
     grouping: source ? 'source' : filters.grouping,
     group: source ?? null,
@@ -539,6 +550,13 @@ function navigate(view: View, source?: string, status = '') {
   document.body.classList.remove('detail-open');
   syncFilters();
   render();
+  if (showDashboard) return;
+  clampPanels();
+  if (recordId) {
+    page = Math.floor(visibleRows.findIndex((row) => row.id === recordId) / pageSize);
+    selectRecord(recordId);
+    return;
+  }
   // Keep the inspector populated after a jump (for example "View N
   // findings"): select the first visible record without opening the
   // narrow-screen overlay or moving focus.
@@ -613,6 +631,7 @@ document.addEventListener('click', (event) => {
     element('filename').textContent = 'No manifest loaded';
     element('filename').title = 'No manifest loaded';
     for (const id of [
+      'dashboard',
       'inspector',
       'record-list',
       'group-list',
@@ -681,7 +700,8 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (action === 'record') {
-    selectRecord(button.dataset.record!);
+    if (showDashboard) navigate('findings', undefined, 'error', button.dataset.record!);
+    else selectRecord(button.dataset.record!);
     return;
   }
   if (action === 'record-jump') {
@@ -748,7 +768,7 @@ document.addEventListener('click', (event) => {
   }
   if (action === 'view' || action === 'metric') {
     if (button.dataset.view)
-      navigate(button.dataset.view as View, undefined, button.dataset.status);
+      navigate(button.dataset.view as View | 'dashboard', undefined, button.dataset.status);
     return;
   }
   if (action === 'grouping') {
@@ -895,8 +915,10 @@ element('record-list').addEventListener('keydown', (event) => {
 document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
     event.preventDefault();
-    if (index) element<HTMLInputElement>('search').focus();
-    else element<HTMLInputElement>('file-input').click();
+    if (index) {
+      if (showDashboard) navigate('findings');
+      element<HTMLInputElement>('search').focus();
+    } else element<HTMLInputElement>('file-input').click();
   }
   if (event.key === 'Escape') closeDetails();
 });

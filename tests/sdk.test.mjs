@@ -51,21 +51,28 @@ test('text, content, file and file URL inputs preserve UTF-16 locations', async 
   }
 });
 
-test('HTML recursively discovers scripts and lists CSS without CSS rule scans', async () => {
+test('HTML recursively scans scripts, stylesheets and inline styles', async () => {
   const html =
     '<base href="/assets/"><script type="importmap">{"imports":{"pkg":"./pkg.js"}}</script><script type="module">import "pkg"; window.boot=1</script><link rel="stylesheet" href="app.css"><style>body{--theme:red}</style><div style="color:red"></div>';
   const manifest = await scanHtml(html, {
     ...offline,
     resourceUrl: 'https://example.test/page.html',
-    resourceMappings: { 'https://example.test/assets/pkg.js': source('window.library=1') },
+    resourceMappings: {
+      'https://example.test/assets/pkg.js': source('window.library=1'),
+      'https://example.test/assets/app.css': source('.card *{color:red}'),
+    },
   });
   assert.equal(manifest.status, 'completed');
   assert.deepEqual(manifest.findings.map((f) => f.target).sort(), [
+    'body',
     'window.boot',
     'window.library',
   ]);
-  assert.equal(manifest.dependencies.filter((d) => d.reason === 'css-not-analyzed').length, 2);
-  assert.equal(manifest.sources.length, 3);
+  assert.equal(
+    manifest.dependencies.filter((d) => d.kind === 'style' && d.status === 'resolved').length,
+    2,
+  );
+  assert.equal(manifest.sources.length, 5);
   assert.equal(manifest.sources.find((s) => s.url?.endsWith('/pkg.js')).chain.length, 3);
 });
 

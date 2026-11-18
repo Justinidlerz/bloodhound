@@ -7,6 +7,7 @@
     <title>Bloodhound · Manifest Playground</title>
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./viewer.css" />
     <script type="module" src="./app.js"></script>
   </head>
   <body>
@@ -91,7 +92,33 @@
           <p id="manifest-meta"></p>
         </div>
         <div class="stats" id="stats"></div>
-        <div class="explorer" id="explorer">
+        <nav class="tabs" aria-label="Record type">
+          <button
+            data-action="view"
+            data-view="dashboard"
+            id="dashboard-tab"
+            aria-pressed="true"
+          ></button>
+          <button data-action="view" data-view="findings" aria-pressed="false">
+            Findings <span id="count-findings"></span></button
+          ><button data-action="view" data-view="sources" aria-pressed="false">
+            Files <span id="count-sources"></span></button
+          ><button data-action="view" data-view="dependencies" aria-pressed="false">
+            Dependencies <span id="count-dependencies"></span></button
+          ><button data-action="view" data-view="gaps" aria-pressed="false">
+            Coverage <span id="count-gaps"></span>
+          </button>
+        </nav>
+        <div class="filter-row" id="polyfill-control" hidden>
+          <span id="polyfill-summary"></span>
+          <button class="text-link" id="polyfill-toggle" data-action="toggle-polyfills"></button>
+        </div>
+        <section
+          class="bh-viewer bh-dashboard"
+          id="dashboard"
+          aria-labelledby="dashboard-tab"
+        ></section>
+        <div class="explorer" id="explorer" hidden>
           <aside class="sidebar" aria-label="Record groups">
             <div class="sidebar-title">
               <h2>Browse by</h2>
@@ -128,17 +155,6 @@
           ></div>
           <section class="records-panel" aria-label="Records">
             <div class="record-toolbar">
-              <nav class="tabs" aria-label="Record type">
-                <button data-action="view" data-view="findings" aria-pressed="true">
-                  Findings <span id="count-findings"></span></button
-                ><button data-action="view" data-view="sources" aria-pressed="false">
-                  Files <span id="count-sources"></span></button
-                ><button data-action="view" data-view="dependencies" aria-pressed="false">
-                  Dependencies <span id="count-dependencies"></span></button
-                ><button data-action="view" data-view="gaps" aria-pressed="false">
-                  Coverage <span id="count-gaps"></span>
-                </button>
-              </nav>
               <div class="search-row">
                 <label class="search-box"
                   ><span aria-hidden="true">⌕</span><span class="sr-only">Search records</span
@@ -167,14 +183,6 @@
                     <option value="medium">Medium</option>
                   </select></label
                 ><span class="result-count" id="result-count" aria-live="polite"></span>
-              </div>
-              <div class="filter-row" id="polyfill-control" hidden>
-                <span id="polyfill-summary"></span>
-                <button
-                  class="text-link"
-                  id="polyfill-toggle"
-                  data-action="toggle-polyfills"
-                ></button>
               </div>
               <div class="active-scope" id="active-scope" hidden></div>
             </div>

@@ -32,17 +32,33 @@ export function attachSourceMaps(
     const file = projectPath(root, resolve(outDir, name));
     if (file) source.file = file;
     const chunk = bundle[name];
-    if (chunk?.type !== 'chunk' || !chunk.map) continue;
-    const text = chunk.map.toString();
+    const cssMapName = source.kind === 'css' ? `${name}.map` : undefined;
+    const cssMap = cssMapName ? bundle[cssMapName] : undefined;
+    const text =
+      chunk?.type === 'chunk' && chunk.map
+        ? chunk.map.toString()
+        : cssMap?.type === 'asset'
+          ? typeof cssMap.source === 'string'
+            ? cssMap.source
+            : new TextDecoder().decode(cssMap.source)
+          : undefined;
+    if (!text) continue;
     // Rollup/Rolldown resolve source paths from the output chunk, even with a custom map folder.
-    const mapBase = output.file
-      ? resolve(output.sourcemapFile ?? output.file)
-      : resolve(outDir, name);
+    const mapBase =
+      source.kind === 'css'
+        ? resolve(outDir, name)
+        : output.file
+          ? resolve(output.sourcemapFile ?? output.file)
+          : resolve(outDir, name);
     const map = AnyMap(text, pathToFileURL(mapBase).href);
     const existingMap =
-      chunk.sourcemapFileName && bundle[chunk.sourcemapFileName]?.type === 'asset'
+      chunk?.type === 'chunk' &&
+      chunk.sourcemapFileName &&
+      bundle[chunk.sourcemapFileName]?.type === 'asset'
         ? chunk.sourcemapFileName
-        : undefined;
+        : cssMap?.type === 'asset'
+          ? cssMapName
+          : undefined;
     const mapName =
       existingMap ?? `bloodhound/sourcemaps/${createHash('sha256').update(text).digest('hex')}.map`;
     // Inline maps need a companion file for the previewer.

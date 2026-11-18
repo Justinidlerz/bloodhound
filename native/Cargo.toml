@@ -23,6 +23,8 @@ oxc_span = "=0.154.0"
 oxc_syntax = "=0.154.0"
 # HTML tokenization with source spans
 html5gum = "=0.8.4"
+# CSS tokenization, nested rules and source spans
+cssparser = "=0.38.0"
 # User-supplied URL exclusion patterns
 regex = "1"
 # Serialization of requests and manifests

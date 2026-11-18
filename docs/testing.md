@@ -13,7 +13,7 @@ Run `pnpm test` after installing with `pnpm install --frozen-lockfile`. It runs 
 | `pnpm format:check`          | JavaScript, TypeScript, documentation and metadata formatting                                                                                                                             |
 | `cargo fmt --all -- --check` | Rust formatting                                                                                                                                                                           |
 
-Rust and Node network tests use loopback HTTP servers. Recursive test graphs use in-memory mappings and disable network access. They cover duplicate entries, cycles, finite dynamic-import candidates, separate document import maps, URL-specific import.meta resolution, redirects, resource/depth limits and parse failures. CSS tests assert discovery without detailed rules and distinguish document inline styles from ordinary SSR markup.
+Rust and Node network tests use loopback HTTP servers. Recursive test graphs use in-memory mappings and disable network access. They cover duplicate entries, cycles, finite dynamic-import candidates, separate document import maps, URL-specific import.meta resolution, redirects, resource/depth limits and parse failures. The HTML fixtures exercise stylesheet discovery, document-wide CSS declarations and document inline styles.
 
 Plugin tests execute both bundlers and compare source-map locations, emitted manifests and diagnostic behavior. Release tests mock npm publishing; no test publishes packages. Current tests are regressions for specified behavior, not a measurement of application-level precision or recall.
 

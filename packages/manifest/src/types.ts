@@ -24,6 +24,7 @@ export type DependencyMode = 'single' | 'recursive';
  * | `global-listener`      | `window.addEventListener(…)` without `removeEventListener`          |
  * | `module-state-write`   | module state inherited by React state or guarding component/model updates    |
  * | `html-global-style`    | `style=` attribute on `<html>`/`<body>`                             |
+ * | `css-global-style`     | stylesheet declarations targeting document roots or unscoped elements |
  */
 export type Rule =
   | 'global-write'
@@ -35,7 +36,8 @@ export type Rule =
   | 'document-style-write'
   | 'global-listener'
   | 'module-state-write'
-  | 'html-global-style';
+  | 'html-global-style'
+  | 'css-global-style';
 
 export type Severity = 'info' | 'warning' | 'error';
 
@@ -59,7 +61,8 @@ export type DependencyKind =
   | 'dynamic-import'
   | 'worker'
   | 'dynamic-script'
-  | 'dynamic-style';
+  | 'dynamic-style'
+  | 'css-import';
 
 /** Lines are 1-based; columns are 0-based UTF-16 code units. */
 export interface Location {

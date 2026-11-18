@@ -1,6 +1,6 @@
 # @bloodhound-rs/rollup-plugin
 
-Scans the emitted bundle with [`@bloodhound-rs/core`](../../README.md) during `generateBundle`, before files are written. Tested with Rollup 4 and Rolldown 1. The plugin uses hooks compatible with Vite builds. It reports global writes, DOM insertions and style injections as warnings or errors, and emits a Manifest v2 beside the bundle. CSS resources are listed as dependencies; their contents are not scanned.
+Scans the emitted bundle with [`@bloodhound-rs/core`](../../README.md) during `generateBundle`, before files are written. Tested with Rollup 4 and Rolldown 1. The plugin uses hooks compatible with Vite builds. It reports global writes, DOM insertions and style injections as warnings or errors, and emits a Manifest v2 beside the bundle. Emitted CSS assets are scanned for document-wide styles and reported as `css-global-style` warnings.
 
 ## Install
 
@@ -53,8 +53,8 @@ The same plugin instance is valid in all three bundlers. Scanning uses `generate
 
 ## What happens during `generateBundle`
 
-1. Every emitted chunk, HTML, and CSS asset is registered as an in-memory resource addressed by `publicPath + fileName`. Source maps use the bundler's `sourcemapFileName`, with a virtual address when no map file is emitted. The scanned copy gets a final directive pointing to `chunk.map`; custom filenames and inline/hidden maps work without changing emitted code.
-2. Entries are the emitted HTML files, or the entry chunks when no HTML is emitted. JavaScript imports and HTML script references resolve against the in-memory bundle. Stylesheet links are listed without fetching or scanning CSS. References outside the bundle appear as coverage gaps by default.
+1. Every emitted chunk, HTML, and CSS asset is registered as an in-memory resource addressed by `publicPath + fileName`. Source maps use the bundler's `sourcemapFileName`, with a virtual address when no map file is emitted. The scanned copy gets a final directive pointing to `chunk.map`; custom filenames and inline/hidden JS maps work without changing emitted code. Paired `<stylesheet>.css.map` assets are also associated with CSS diagnostics and source previews, including hidden CSS maps.
+2. Entries include every emitted CSS asset plus the emitted HTML files, or entry chunks when no HTML is emitted. JavaScript imports, HTML resource references and CSS `@import` resolve against the in-memory bundle. Shared stylesheets are analyzed once. A custom `entries` predicate replaces this default selection. References outside the bundle appear as coverage gaps by default.
 3. When `onManifest` is configured, it receives Manifest v2 and handles collection or writing; the plugin does not emit a manifest asset. Otherwise the manifest is emitted as `bloodhound.manifest.json` in the output directory, unless `manifestFileName` is `false`. Resource records include project-relative output paths and source-map associations for original-source previews. Existing map assets are reused; inline maps receive a companion asset under `bloodhound/sourcemaps/` in either mode.
 4. Each global mutation and finding becomes a warning with `loc` pointing at the original source when a source map is available, otherwise at the emitted file. Inline scripts and styles point at their containing document.
 5. When any `error`-severity diagnostic remains, the build fails with a summary. The callback or default manifest emission runs before this check. Async callbacks are awaited; callback failures fail the build without falling back to default manifest emission.
@@ -65,7 +65,7 @@ The same plugin instance is valid in all three bundlers. Scanning uses `generate
 | ------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `root`             | Vite root or `process.cwd()`                      | Project root for output and original-source preview paths.                                                         |
 | `publicPath`       | `https://bundle.local/`                           | Origin and prefix used to address emitted files. Match Vite `base` or the CDN prefix so `<script src>` resolves.   |
-| `entries`          | HTML assets, else entries                         | `(fileName, item) => boolean` selecting scan entries.                                                              |
+| `entries`          | CSS plus HTML assets, else CSS plus entry chunks  | `(fileName, item) => boolean` selecting scan entries.                                                              |
 | `scriptMode`       | from `output.format`                              | `module` for `es`, otherwise `classic`.                                                                            |
 | `scanOptions`      | `{ sourceMaps: true, access: { protocols: [] } }` | Extra `ScanOptions`; set `access` to allow fetching already deployed shared resources.                             |
 | `manifestFileName` | `bloodhound.manifest.json`                        | Default output filename when no callback is configured; `false` disables it. Also the base for relative map URLs.  |

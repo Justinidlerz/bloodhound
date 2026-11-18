@@ -149,17 +149,15 @@ for (const [name, run] of Object.entries(bundlers)) {
     const manifest = manifestOf(output);
     assert.deepEqual(manifest.entries, ['s1']);
     assert.equal(manifest.sources[0].url, 'https://cdn.example/index.html');
-    assert.ok(
-      manifest.dependencies.some((d) => d.kind === 'style' && d.reason === 'css-not-analyzed'),
-    );
+    assert.ok(manifest.dependencies.some((d) => d.kind === 'style' && d.status === 'resolved'));
     assert.ok(
       manifest.dependencies.every((d) => d.status !== 'unresolved'),
       JSON.stringify(manifest.dependencies),
     );
     const boot = warnings(logs).find((item) => item.message.includes('__BOOT__'));
     assert.deepEqual(boot.loc, { file: 'index.html', line: 1, column: 50 });
-    const css = warnings(logs).find((item) => item.message.includes('custom-property'));
-    assert.equal(css, undefined);
+    const css = warnings(logs).find((item) => item.message.includes('css-global-style: :root'));
+    assert.deepEqual(css.loc, { file: 'index.html', line: 1, column: 22 });
   });
 
   test(`${name}: error severity fails the build after the manifest callback runs`, async (t) => {

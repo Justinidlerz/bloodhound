@@ -3,13 +3,13 @@ use crate::model::*;
 use crate::test_support::*;
 
 #[test]
-fn css_is_discovered_but_only_document_inline_styles_are_findings() {
+fn inline_stylesheet_and_document_styles_are_findings() {
     let html = r#"<html style="color:red"><body style="margin:0"><div style="width:1px"></div><link rel="stylesheet" href="a.css"><style>:root{--theme:red} @keyframes x{}</style><script type="application/json">{"x":"<script>"}</script><template><script>window.inert=1</script></template><script>window.active=1</script>"#;
     let m = manifest(
         vec![content(Kind::Html, "https://example.test/", html)],
         options(),
     );
-    assert_eq!(m.findings.len(), 2);
+    assert_eq!(m.findings.len(), 3);
     let styles: Vec<_> = m
         .findings
         .iter()
@@ -27,10 +27,10 @@ fn css_is_discovered_but_only_document_inline_styles_are_findings() {
     assert!(
         m.dependencies
             .iter()
-            .filter(|d| d.kind == DependencyKind::Style)
-            .all(|d| d.reason.as_deref() == Some("css-not-analyzed"))
+            .any(|d| d.kind == DependencyKind::Style && d.status == DependencyStatus::Resolved)
     );
-    assert_eq!(m.sources.len(), 2);
+    assert_eq!(m.sources.len(), 4);
+    assert!(targets(&m).contains(&":root"));
     assert!(targets(&m).contains(&"window.active"));
 }
 

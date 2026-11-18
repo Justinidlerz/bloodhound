@@ -12,7 +12,7 @@
 //! * a `style=` attribute on `<html>`/`<body>` as the only
 //!   HTML-level pollution finding (styles scoped to the whole document).
 //!
-//! CSS resources are reported as dependencies and are never analyzed.
+//! CSS resources are analyzed by the scheduler in recursive mode.
 
 use crate::model::{
     Analysis, Confidence, Dependency, DependencyKind, Finding, Gap, ImportMap, Rule, ScriptMode,

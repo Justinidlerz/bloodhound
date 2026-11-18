@@ -21,11 +21,11 @@
 //! differently under two import maps. Analysis is never reused across URLs;
 //! `import.meta.url` and document-relative loaders depend on that context.
 
-use crate::html;
 use crate::js::{self, JsOptions};
 use crate::loader::{self, Loaded, Loader};
 use crate::model::*;
 use crate::resolve;
+use crate::{css, html};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -346,8 +346,14 @@ fn work(
         loaded.final_url.clone()
     };
     loaded.final_url = url.clone();
-    let map = if options.source_maps && job.kind == Kind::Js {
-        loader::source_map(loader, &loaded.content, &loaded.final_url, cancel)
+    let map = if options.source_maps {
+        match job.kind {
+            Kind::Js => loader::source_map(loader, &loaded.content, &loaded.final_url, cancel),
+            Kind::Css => css::source_map_reference(&loaded.content).and_then(|reference| {
+                loader::load_source_map(loader, reference, &loaded.final_url, cancel)
+            }),
+            Kind::Html => None,
+        }
     } else {
         None
     };
@@ -372,7 +378,7 @@ fn work(
             };
             js::analyze(&loaded.content, &js_options, cancel, map.as_ref())
         }
-        Kind::Css => Analysis::default(),
+        Kind::Css => css::analyze(&loaded.content, options.budgets.max_steps, cancel),
     };
     Ok((loaded, analysis, map))
 }
@@ -425,7 +431,10 @@ impl<'o> Coordinator<'o> {
         referrer: Option<usize>,
         inline: Option<(usize, u32)>,
     ) -> usize {
+        // Stylesheets resolve imports relative to their own URL, independently
+        // of document import maps. Reuse CSS selected both as an asset and a link.
         let context = referrer
+            .filter(|_| kind != Kind::Css)
             .map(|p| {
                 if self.resources[p].key_kind == Kind::Html {
                     p + 1
@@ -655,16 +664,6 @@ impl<'o> Coordinator<'o> {
                 own_url.split('#').next().unwrap_or(own_url),
                 offset
             );
-            if kind == Kind::Css {
-                // CSS is discovered, never analyzed.
-                return Edge {
-                    dependency: dep_index,
-                    to: None,
-                    status: DependencyStatus::NotFollowed,
-                    reason: Some("css-not-analyzed".into()),
-                    url: None,
-                };
-            }
             if single {
                 return Edge {
                     dependency: dep_index,
@@ -725,7 +724,9 @@ impl<'o> Coordinator<'o> {
         // document base carried in their dependency. Anonymous inputs can
         // fall back to the caller's explicit base URL.
         let base = dep.base_url.as_deref().unwrap_or_else(|| {
-            if own_url.starts_with("memory:") {
+            if dep.kind == DependencyKind::CssImport && self.resources[from].inline.is_some() {
+                html_base.unwrap_or(own_url)
+            } else if own_url.starts_with("memory:") {
                 self.options.base_url.as_deref().unwrap_or(own_url)
             } else {
                 own_url
@@ -769,15 +770,6 @@ impl<'o> Coordinator<'o> {
                 url: Some(url),
             };
         }
-        if kind == Kind::Css {
-            return Edge {
-                dependency: dep_index,
-                to: None,
-                status: DependencyStatus::NotFollowed,
-                reason: Some("css-not-analyzed".into()),
-                url: Some(url),
-            };
-        }
         if single {
             return Edge {
                 dependency: dep_index,
@@ -810,7 +802,9 @@ impl<'o> Coordinator<'o> {
         } else {
             None
         };
-        let context = if self.resources[from].key_kind == Kind::Html {
+        let context = if kind == Kind::Css {
+            0
+        } else if self.resources[from].key_kind == Kind::Html {
             from + 1
         } else {
             self.resources[from].context
