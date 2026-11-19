@@ -1,5 +1,12 @@
 # @bloodhound-rs/manifest
 
+## 0.2.0
+
+### Minor Changes
+
+- ae4749e: Restore CSS artifact scanning with warning-level css-global-style findings for document roots and unscoped selectors. Follow stylesheet links, inline styles and CSS imports, preserve component selector and scope boundaries, and expose CSS source locations and paired source maps in the playground.
+- ae4749e: Add a default Dashboard with finding counts by type, error and warning totals, and a complete list of errors linking to their details.
+
 ## 0.1.0
 
 ### Minor Changes

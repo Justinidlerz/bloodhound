@@ -1,5 +1,17 @@
 # @bloodhound-rs/core
 
+## 0.4.0
+
+### Minor Changes
+
+- ae4749e: Restore CSS artifact scanning with warning-level css-global-style findings for document roots and unscoped selectors. Follow stylesheet links, inline styles and CSS imports, preserve component selector and scope boundaries, and expose CSS source locations and paired source maps in the playground.
+
+### Patch Changes
+
+- Updated dependencies [ae4749e]
+- Updated dependencies [ae4749e]
+  - @bloodhound-rs/manifest@0.2.0
+
 ## 0.3.1
 
 ### Patch Changes
