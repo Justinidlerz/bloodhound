@@ -263,7 +263,6 @@ pub fn source_map(
     final_url: &str,
     cancel: &Cancellation,
 ) -> Option<sourcemap::DecodedMap> {
-    use base64::Engine as _;
     // Only accept directives from parser-recognized comments. A string such
     // as `const x = 'sourceMappingURL=...'` must never trigger a map load.
     let allocator = oxc_allocator::Allocator::default();
@@ -283,6 +282,16 @@ pub fn source_map(
             .split(|c: char| c.is_whitespace() || c == '*')
             .next()
     })?;
+    load_source_map(loader, reference, final_url, cancel)
+}
+
+pub fn load_source_map(
+    loader: &Loader,
+    reference: &str,
+    final_url: &str,
+    cancel: &Cancellation,
+) -> Option<sourcemap::DecodedMap> {
+    use base64::Engine as _;
     let bytes = if let Some(data) = reference.strip_prefix("data:") {
         let (meta, body) = data.split_once(',')?;
         if body.len() > loader.options.budgets.max_resource_bytes.saturating_mul(3) {

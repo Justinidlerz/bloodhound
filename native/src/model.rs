@@ -294,6 +294,8 @@ pub enum Rule {
     ModuleStateWrite,
     /// `style=` attribute on `<html>`/`<body>` in HTML.
     HtmlGlobalStyle,
+    /// Stylesheet declarations targeting document roots or unscoped elements.
+    CssGlobalStyle,
 }
 
 impl Rule {
@@ -308,7 +310,8 @@ impl Rule {
             | Self::StyleInjection
             | Self::DocumentStyleWrite
             | Self::GlobalListener
-            | Self::ModuleStateWrite => Severity::Warning,
+            | Self::ModuleStateWrite
+            | Self::CssGlobalStyle => Severity::Warning,
             Self::HtmlGlobalStyle => Severity::Info,
         }
     }
@@ -410,13 +413,15 @@ pub enum DependencyKind {
     DynamicScript,
     /// `link.href = ...` on a created stylesheet link.
     DynamicStyle,
+    /// `@import` in a stylesheet.
+    CssImport,
 }
 
 impl DependencyKind {
     /// The resource kind this dependency loads.
     pub fn child_kind(self) -> Kind {
         match self {
-            Self::Style | Self::DynamicStyle => Kind::Css,
+            Self::Style | Self::DynamicStyle | Self::CssImport => Kind::Css,
             Self::Iframe => Kind::Html,
             _ => Kind::Js,
         }

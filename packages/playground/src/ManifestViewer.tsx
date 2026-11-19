@@ -104,13 +104,26 @@ function ViewerSession({
     () => new OriginalSources(manifestUrl, workspace, loadText),
     [manifestUrl, workspace, loadText],
   );
+  const [showDashboard, setShowDashboard] = useState(true);
   const [filters, setFilters] = useState(initialFilters);
   const [selected, setSelected] = useState<string>();
   const [page, setPage] = useState(0);
   const query = useDeferredValue(filters.query);
+  const summary = useMemo(
+    () => (showDashboard ? index.findingSummary(filters.includePolyfills) : undefined),
+    [index, showDashboard, filters.includePolyfills],
+  );
   const baseRows = useMemo(
-    () => index.baseRows({ ...filters, query }),
-    [index, filters.view, query, filters.severity, filters.confidence, filters.includePolyfills],
+    () => (showDashboard ? [] : index.baseRows({ ...filters, query })),
+    [
+      index,
+      showDashboard,
+      filters.view,
+      query,
+      filters.severity,
+      filters.confidence,
+      filters.includePolyfills,
+    ],
   );
   const groups = useMemo(
     () => index.groups(baseRows, filters.grouping),
@@ -131,6 +144,16 @@ function ViewerSession({
     setSelected(undefined);
   }
   function select(row: RecordRow) {
+    if (summary) {
+      setFilters({
+        ...initialFilters,
+        severity: 'error',
+        includePolyfills: filters.includePolyfills,
+      });
+      const position = summary.errors.findIndex((error) => error.id === row.id);
+      setPage(Math.floor(position / size));
+      setShowDashboard(false);
+    }
     setSelected(row.id);
     onSelect?.(row);
   }
@@ -228,8 +251,8 @@ function ViewerSession({
   const source = row?.source ? index.sources.get(row.source) : undefined;
   const statusOptions = [...new Set(index.rows[filters.view].map((row) => row.status))];
 
-  return (
-    <section className={`bh-viewer ${className}`} aria-label={t('viewer.label')}>
+  const controls = (
+    <>
       <header className="bh-heading">
         <strong>{t('viewer.title')}</strong>
         <Tag status={manifest.status}>
@@ -249,13 +272,24 @@ function ViewerSession({
         </p>
       ))}
       <nav className="bh-controls bh-categories" aria-label={t('view.categories')}>
+        <Button
+          variant="toggle"
+          aria-pressed={showDashboard}
+          onClick={() => {
+            setShowDashboard(true);
+            setSelected(undefined);
+          }}
+        >
+          {t('view.dashboard')}
+        </Button>
         {views.map((view) => (
           <Button
             key={view}
             variant="toggle"
-            aria-pressed={filters.view === view}
+            aria-pressed={!showDashboard && filters.view === view}
             onClick={() => {
-              if (filters.view !== view)
+              setShowDashboard(false);
+              if (showDashboard || filters.view !== view)
                 filter({ ...initialFilters, view, includePolyfills: filters.includePolyfills });
             }}
           >
@@ -268,7 +302,7 @@ function ViewerSession({
           </Button>
         ))}
       </nav>
-      {filters.view === 'findings' && index.polyfills.size > 0 ? (
+      {(showDashboard || filters.view === 'findings') && index.polyfills.size > 0 ? (
         <div className="bh-controls">
           <span>
             {t(filters.includePolyfills ? 'polyfill.included' : 'polyfill.hidden', {
@@ -284,6 +318,42 @@ function ViewerSession({
           </Button>
         </div>
       ) : null}
+    </>
+  );
+  const content = summary ? (
+    <section className="bh-dashboard" aria-label={t('view.dashboard')}>
+      <dl className="bh-metrics">
+        <div>
+          <dt>{t('dashboard.types')}</dt>
+          <dd>{summary.types.length}</dd>
+        </div>
+        <div>
+          <dt>{t('dashboard.errors')}</dt>
+          <dd>{summary.errors.length}</dd>
+        </div>
+        <div>
+          <dt>{t('dashboard.warnings')}</dt>
+          <dd>{summary.warnings}</dd>
+        </div>
+      </dl>
+      {summary.types.length > 0 && (
+        <ul className="bh-type-counts" aria-label={t('dashboard.types')}>
+          {summary.types.map(({ id, count }) => (
+            <li key={id}>{t('view.count', { name: label(id), count })}</li>
+          ))}
+        </ul>
+      )}
+      <h3>{t('dashboard.errorList')}</h3>
+      {summary.errors.length ? (
+        <div className="bh-table-scroll">
+          <Table columns={columns} data={summary.errors} rowKey="id" pagination={false} />
+        </div>
+      ) : (
+        <p role="status">{t('dashboard.noErrors')}</p>
+      )}
+    </section>
+  ) : (
+    <>
       <div className="bh-controls bh-filters">
         <Input
           value={filters.query}
@@ -440,6 +510,12 @@ function ViewerSession({
           ) : null
         }
       />
+    </>
+  );
+  return (
+    <section className={`bh-viewer ${className}`} aria-label={t('viewer.label')}>
+      {controls}
+      {content}
     </section>
   );
 }

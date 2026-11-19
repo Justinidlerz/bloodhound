@@ -1,8 +1,6 @@
 # @bloodhound-rs/core
 
-A Rust-backed SDK that statically scans HTML and JavaScript for writes to shared globals, DOM insertion, and style injection. The result is a JSON-serializable Manifest v2 with source locations, dependency edges, severity, and a shortest entry-to-source chain. Input code is never executed.
-
-CSS files and inline `<style>` blocks are discovered and listed. CSS selectors, custom properties, animations, keyframes, and CSS imports are not analyzed. Direct writes to document-level inline styles remain detectable.
+A Rust-backed SDK that statically scans JavaScript, HTML and CSS for writes to shared globals, DOM insertion, style injection and document-wide styles. The result is a JSON-serializable Manifest v2 with source locations, dependency edges, severity, and a shortest entry-to-source chain. Input code is never executed.
 
 ## Install
 
@@ -70,6 +68,7 @@ Strings always mean source text. File paths and URLs use explicit source objects
 | `global-listener`      | `window.addEventListener(…)`, document listeners                                   | warning          |
 | `module-state-write`   | module state inherited by React state or suppressing component/model state updates | warning          |
 | `html-global-style`    | `<html style="…">`, `<body style="…">`                                             | info             |
+| `css-global-style`     | `html`, `body`, `:root`, `*`, unscoped element selectors in CSS                    | warning          |
 
 Ordinary element `style=` attributes in SSR markup are not findings. Expected browser state changes such as `document.title`, `document.cookie`, and navigation are excluded. A severity label is a default consumer policy, not proof that code is harmful.
 
@@ -198,7 +197,9 @@ A disjunction such as `!window.fetch || force` does not prove that a native capa
 
 Lines are 1-based, columns are 0-based UTF-16 units. Inline findings use fragment-relative coordinates; `source.inline` gives their origin in the parent. For a first-line finding, add the origin column; for later lines, use the finding column unchanged. The bundler plugin performs this conversion automatically. Source maps optionally add `location.original`.
 
-CSS dependency edges use `not-followed` with `reason: 'css-not-analyzed'`. CSS dependencies do not create analyzed source records. An explicit `kind: 'css'` entry is loaded and listed with no findings. Unloaded or unparseable JavaScript produces unresolved edges and coverage gaps.
+CSS entries and recursively reached stylesheets are analyzed. HTML `<style>`, stylesheet links, dynamically discovered stylesheet links and CSS `@import` participate in the resource graph. CSS imports use `kind: 'css-import'` and resolve relative to the stylesheet (or the document base for inline styles). Single mode lists dependencies without following them. Unloaded resources and parse failures remain visible as coverage gaps.
+
+`css-global-style` reports declarations targeting document roots or unscoped elements, including nested `@media`, `@supports` and `@layer` rules. Class, ID and attribute selectors constrain component styles: `.panel *` and `body .panel` are excluded, while `body.dark` still changes the document. `:is()`/`:where()` retain global branches; component `@scope` blocks and CSS nesting retain their container boundary. Variables, resets and animations inside component rules are not independently reported. Keyframe names, font declarations and custom-property registrations are outside this rule. These are static candidates, not proof of a runtime style collision.
 
 ## Offline scans, limits and cancellation
 

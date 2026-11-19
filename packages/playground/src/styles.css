@@ -56,6 +56,36 @@
 .bh-viewer {
   container: bh-viewer / inline-size;
 }
+.bh-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.bh-metrics > div {
+  border: 1px solid var(--bh-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+.bh-metrics dt {
+  color: var(--bh-muted);
+  overflow-wrap: anywhere;
+}
+.bh-metrics dd {
+  margin: 2px 0 0;
+  font-size: 1.5em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bh-type-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
 .bh-layout {
   position: relative;
   display: grid;

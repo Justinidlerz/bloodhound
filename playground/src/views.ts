@@ -90,6 +90,33 @@ export function recordList(
   })}`;
 }
 
+export function dashboard(index: ManifestIndex, includePolyfills: boolean): Markup {
+  const { types, errors, warnings } = index.findingSummary(includePolyfills);
+  return html`<dl class="bh-metrics">
+      <div>
+        <dt>${englishMessages['dashboard.types']}</dt>
+        <dd>${count(types.length)}</dd>
+      </div>
+      <div>
+        <dt>${englishMessages['dashboard.errors']}</dt>
+        <dd>${count(errors.length)}</dd>
+      </div>
+      <div>
+        <dt>${englishMessages['dashboard.warnings']}</dt>
+        <dd>${count(warnings)}</dd>
+      </div>
+    </dl>
+    ${types.length
+      ? html`<ul class="bh-type-counts" aria-label="${englishMessages['dashboard.types']}">
+          ${types.map((type) => html`<li>${human(type.name)} (${count(type.count)})</li>`)}
+        </ul>`
+      : ''}
+    <h3>${englishMessages['dashboard.errorList']}</h3>
+    ${errors.length
+      ? recordList(index, errors, null, 0, errors.length)
+      : html`<p role="status">${englishMessages['dashboard.noErrors']}</p>`}`;
+}
+
 export function groupList(
   index: ManifestIndex,
   rows: RecordRow[],

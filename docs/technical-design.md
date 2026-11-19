@@ -1,6 +1,6 @@
 # Scanner architecture
 
-The SDK accepts explicit file, URL or content sources and returns a single Manifest v2. Rust owns loading, parsing, analysis, dependency scheduling and report construction. The TypeScript wrapper calls the napi binding and parses its JSON result. It exports public types for platform consumers. CSS contents are outside the analysis scope. The Playground consumes the same manifest for local inspection; it does not change scanner output or add a server-side scan path.
+The SDK accepts explicit file, URL or content sources and returns a single Manifest v2. Rust owns loading, parsing, analysis, dependency scheduling and report construction. The TypeScript wrapper calls the napi binding and parses its JSON result. It exports public types for platform consumers. CSS artifacts are tokenized with cssparser; declarations with document-wide selectors become warning-level findings, while stylesheet imports participate in the resource graph. The Playground consumes the same manifest for local inspection; it does not change scanner output or add a server-side scan path.
 
 ## Modules and data flow
 

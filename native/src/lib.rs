@@ -10,6 +10,7 @@
 //! `index.js` parses. This keeps the binding tiny and lets the Rust side own
 //! every data structure.
 
+mod css;
 mod html;
 mod js;
 mod lines;

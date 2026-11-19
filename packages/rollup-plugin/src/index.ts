@@ -110,7 +110,7 @@ export interface BloodhoundPluginOptions {
    * production CDN prefix so that script references inside emitted HTML resolve to bundle files.
    */
   publicPath?: string;
-  /** Select which emitted files are scan entries. Default: HTML assets, or entry chunks when no HTML is emitted. */
+  /** Select emitted scan entries. Default: all CSS assets plus HTML assets, or entry chunks when no HTML is emitted. */
   entries?: (fileName: string, item: BundleChunk | BundleAsset) => boolean;
   /** Script mode for JavaScript entries. Default: derived from the output format. */
   scriptMode?: ScriptMode;
@@ -296,15 +296,22 @@ function prepare(bundle: Bundle, base: string, options: BloodhoundPluginOptions)
       }
       continue;
     }
-    resourceMappings[url] = { type: 'content', content: decode(item.source), resourceUrl: url };
+    let content = decode(item.source);
+    // Extracted CSS maps are assets rather than chunk.map, including hidden maps.
+    if (kind === 'css' && bundle[`${fileName}.map`]?.type === 'asset') {
+      content += `\n/*# sourceMappingURL=${new URL(`${fileName}.map`, base).href} */\n`;
+    }
+    resourceMappings[url] = { type: 'content', content, resourceUrl: url };
     urls.set(url, fileName);
     candidates.push({ fileName, item, kind });
   }
   const selected = options.entries
     ? candidates.filter(({ fileName, item }) => options.entries!(fileName, item))
     : candidates.some(({ kind }) => kind === 'html')
-      ? candidates.filter(({ kind }) => kind === 'html')
-      : candidates.filter(({ item }) => item.type === 'chunk' && item.isEntry);
+      ? candidates.filter(({ kind }) => kind === 'html' || kind === 'css')
+      : candidates.filter(
+          ({ kind, item }) => kind === 'css' || (item.type === 'chunk' && item.isEntry),
+        );
   const entries: ScanEntry[] = selected.map(({ fileName, kind }) => {
     const url = new URL(fileName, base).href;
     return { kind, source: resourceMappings[url]!, resourceUrl: url };
@@ -343,7 +350,7 @@ function locate(diagnostic: Diagnostic, outputOptions: BundleOutputOptions): Log
     const file =
       isAbsolute(source) || SCHEME.test(source) || !diagnostic.fileName
         ? source
-        : outputOptions.sourcemapFile
+        : outputOptions.sourcemapFile && diagnostic.rule !== 'css-global-style'
           ? resolvePath(dirname(outputOptions.sourcemapFile), source)
           : resolvePath(outDir, dirname(diagnostic.fileName), source);
     return { file, line, column };
